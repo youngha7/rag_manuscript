@@ -43,9 +43,22 @@ def _in_clause(col: str, values: list, params: dict, prefix: str) -> str:
     return f"{col} IN ({', '.join(placeholders)})"
 
 
+def _read_value(v):
+    """CLOB 등 LOB locator는 연결이 살아있는 동안 즉시 읽어 문자열로 변환한다.
+
+    연결을 닫은 뒤 지연 접근하면 DPY-1001(not connected to database)이 발생한다.
+    """
+    if oracledb is not None and isinstance(v, oracledb.LOB):
+        return v.read()
+    return v
+
+
 def _rows_to_dicts(cur) -> list[dict]:
     cols = [d[0].lower() for d in cur.description]
-    return [dict(zip(cols, row)) for row in cur.fetchall()]
+    return [
+        {col: _read_value(v) for col, v in zip(cols, row)}
+        for row in cur.fetchall()
+    ]
 
 
 # ── 목록 조회 ─────────────────────────────────────────────────────────────────
@@ -60,6 +73,9 @@ def fetch_logs(
     ragas_f_min: float = 0.0,
     ragas_f_max: float = 1.0,
     keyword: str = "",
+    ablation_conditions: list[str] | None = None,
+    diseases: list[str] | None = None,
+    query_level_labels: list[str] | None = None,
     page: int = 1,
 ) -> tuple[pd.DataFrame, int]:
     """필터 조건으로 rag_audit_log_bak를 페이지네이션 조회한다.
@@ -91,6 +107,12 @@ def fetch_logs(
     if fallback is not None:
         where.append("is_fallback = :is_fallback")
         params["is_fallback"] = 1 if fallback else 0
+    if ablation_conditions:
+        where.append(_in_clause("ablation_condition", ablation_conditions, params, "abl"))
+    if diseases:
+        where.append(_in_clause("disease", diseases, params, "dis"))
+    if query_level_labels:
+        where.append(_in_clause("query_level_label", query_level_labels, params, "qll"))
 
     where.append("(ragas_f IS NULL OR ragas_f BETWEEN :ragas_f_min AND :ragas_f_max)")
     params["ragas_f_min"] = ragas_f_min
@@ -103,24 +125,31 @@ def fetch_logs(
     where.append("is_final = 1")
     where_sql = "WHERE " + " AND ".join(where)
 
-    offset = (page - 1) * PAGE_SIZE
-    params["offset"] = offset
-    params["page_size"] = PAGE_SIZE
-
     count_sql = f"SELECT COUNT(*) FROM rag_audit_log_bak {where_sql}"
     data_sql = f"""
         SELECT
             log_id,
             request_id,
-            created_at AT TIME ZONE 'Asia/Seoul' AS created_at,
+            created_at,
+            ablation_condition,
+            query_index,
+            disease,
+            query_level_label,
             user_level,
             original_query,
             final_tier,
+            tier_path,
             loop_number,
             self_correction_count,
             ragas_f,
             ragas_ar,
             ragas_cp,
+            q_total,
+            fk_grade,
+            ir_hit_rate,
+            ir_mrr,
+            deepeval_faithfulness,
+            deepeval_answer_relevancy,
             is_escalated,
             is_fallback,
             execution_time_ms
@@ -136,7 +165,10 @@ def fetch_logs(
             cur.execute(count_sql, params)
             total: int = cur.fetchone()[0]
 
-            cur.execute(data_sql, params)
+            data_params = dict(params)
+            data_params["offset"] = (page - 1) * PAGE_SIZE
+            data_params["page_size"] = PAGE_SIZE
+            cur.execute(data_sql, data_params)
             rows = _rows_to_dicts(cur)
         conn.close()
 
@@ -146,7 +178,11 @@ def fetch_logs(
         df = pd.DataFrame(rows)
         df["request_id_short"] = df["request_id"].astype(str).str[:8] + "..."
         df["tier_label"] = df["final_tier"].map(TIER_LABEL)
-        df["created_at"] = pd.to_datetime(df["created_at"]).dt.strftime("%Y-%m-%d %H:%M")
+        df["created_at"] = (
+            pd.to_datetime(df["created_at"], utc=True)
+            .dt.tz_convert("Asia/Seoul")
+            .dt.strftime("%Y-%m-%d %H:%M")
+        )
         return df, total
 
     except Exception as e:
@@ -171,7 +207,11 @@ def fetch_detail(request_id: str) -> dict:
         SELECT
             log_id,
             request_id,
-            created_at AT TIME ZONE 'Asia/Seoul' AS created_at,
+            created_at,
+            ablation_condition,
+            query_index,
+            disease,
+            query_level_label,
             user_level,
             original_query,
             optimized_query,
@@ -179,10 +219,17 @@ def fetch_detail(request_id: str) -> dict:
             loop_number,
             is_final,
             final_tier,
+            tier_path,
             self_correction_count,
             ragas_f,
             ragas_ar,
             ragas_cp,
+            q_total,
+            fk_grade,
+            ir_hit_rate,
+            ir_mrr,
+            deepeval_faithfulness,
+            deepeval_answer_relevancy,
             is_escalated,
             is_fallback,
             retrieved_doc_count,
@@ -206,8 +253,10 @@ def fetch_detail(request_id: str) -> dict:
 
         loops_df = pd.DataFrame(dicts)
         loops_df["tier_label"] = loops_df["final_tier"].map(TIER_LABEL)
-        loops_df["created_at"] = pd.to_datetime(loops_df["created_at"]).dt.strftime(
-            "%Y-%m-%d %H:%M:%S"
+        loops_df["created_at"] = (
+            pd.to_datetime(loops_df["created_at"], utc=True)
+            .dt.tz_convert("Asia/Seoul")
+            .dt.strftime("%Y-%m-%d %H:%M:%S")
         )
 
         seen: set[str] = set()
@@ -224,13 +273,17 @@ def fetch_detail(request_id: str) -> dict:
 
         return {
             "meta": {
-                "request_id":     str(first["request_id"]),
-                "created_at":     pd.to_datetime(first["created_at"]).strftime(
-                    "%Y-%m-%d %H:%M:%S"
-                ),
-                "user_level":     first["user_level"],
-                "llm_model":      first["llm_model"] or "",
-                "original_query": first["original_query"],
+                "request_id":         str(first["request_id"]),
+                "created_at":         pd.to_datetime(first["created_at"], utc=True)
+                    .tz_convert("Asia/Seoul")
+                    .strftime("%Y-%m-%d %H:%M:%S"),
+                "user_level":         first["user_level"],
+                "llm_model":          first["llm_model"] or "",
+                "original_query":     first["original_query"],
+                "ablation_condition": first.get("ablation_condition") or "",
+                "query_index":        first.get("query_index"),
+                "disease":            first.get("disease") or "",
+                "query_level_label":  first.get("query_level_label") or "",
             },
             "loops":        loops_df,
             "queries":      queries,
@@ -240,3 +293,20 @@ def fetch_detail(request_id: str) -> dict:
     except Exception as e:
         logger.error("fetch_detail 실패: %s", e, exc_info=True)
         return {}
+
+
+# ── 필터 옵션 조회 ────────────────────────────────────────────────────────────
+
+def fetch_diseases() -> list[str]:
+    """필터 드롭다운용 disease 목록 (NULL 제외, 알파벳순)."""
+    sql = "SELECT DISTINCT disease FROM rag_audit_log_bak WHERE disease IS NOT NULL ORDER BY disease"
+    try:
+        conn = _conn()
+        with conn.cursor() as cur:
+            cur.execute(sql)
+            values = [row[0] for row in cur.fetchall()]
+        conn.close()
+        return values
+    except Exception as e:
+        logger.error("fetch_diseases 실패: %s", e, exc_info=True)
+        return []

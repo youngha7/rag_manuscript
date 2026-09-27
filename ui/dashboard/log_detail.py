@@ -24,6 +24,7 @@ def render_detail(request_id: str) -> None:
 
     if st.button("← Back to List", type="secondary"):
         st.session_state["log_selected_id"] = None
+        st.session_state.pop("log_table", None)
         st.rerun()
 
     st.subheader("Log Detail")
@@ -45,6 +46,17 @@ def render_detail(request_id: str) -> None:
     c3.metric("User Level",  meta["user_level"])
     c4.metric("LLM",         meta["llm_model"] or "—")
 
+    if meta.get("disease") or meta.get("ablation_condition"):
+        c5, c6, c7 = st.columns(3)
+        c5.metric("Ablation Condition", meta.get("ablation_condition") or "—")
+        c6.metric("Disease", meta.get("disease") or "—")
+        query_index = meta.get("query_index")
+        qll = meta.get("query_level_label") or ""
+        c7.metric(
+            "STQS Query",
+            f"#{int(query_index)} ({qll})" if query_index is not None else "—",
+        )
+
     st.markdown(
         f"**Original Query** &nbsp; `{meta['original_query']}`",
         unsafe_allow_html=True,
@@ -54,16 +66,19 @@ def render_detail(request_id: str) -> None:
     st.markdown("#### Loop History")
 
     show_cols = {
-        "tier_label":          "Tier",
-        "loop_number":         "Loop",
-        "ragas_f":             "F",
-        "ragas_ar":            "AR",
-        "ragas_cp":            "CP",
-        "is_escalated":        "Escalated",
-        "is_fallback":         "Fallback",
-        "retrieved_doc_count": "Chunks",
-        "execution_time_ms":   "Time (ms)",
-        "created_at":          "Timestamp",
+        "tier_label":                "Tier",
+        "loop_number":               "Loop",
+        "ragas_f":                   "F",
+        "ragas_ar":                  "AR",
+        "ragas_cp":                  "CP",
+        "deepeval_faithfulness":     "DE-F",
+        "deepeval_answer_relevancy": "DE-AR",
+        "fk_grade":                  "FK",
+        "is_escalated":              "Escalated",
+        "is_fallback":               "Fallback",
+        "retrieved_doc_count":       "Chunks",
+        "execution_time_ms":         "Time (ms)",
+        "created_at":                "Timestamp",
     }
     loops_view = loops_df[list(show_cols.keys())].rename(columns=show_cols).copy()
 
@@ -78,7 +93,13 @@ def render_detail(request_id: str) -> None:
         .applymap(lambda v: "color:#2ecc71" if isinstance(v, float) and v >= _CP_OK else
                             "color:#e74c3c" if isinstance(v, float) else "",
                   subset=["CP"])
-        .format({"F": "{:.3f}", "AR": "{:.3f}", "CP": "{:.3f}"}, na_rep="—")
+        .format(
+            {
+                "F": "{:.3f}", "AR": "{:.3f}", "CP": "{:.3f}",
+                "DE-F": "{:.3f}", "DE-AR": "{:.3f}", "FK": "{:.1f}",
+            },
+            na_rep="—",
+        )
     )
     st.dataframe(styled, width="stretch", hide_index=True)
 

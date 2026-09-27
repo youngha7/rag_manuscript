@@ -3,10 +3,10 @@
 Oracle rag_audit_log_bak-based visualization:
   1. RAGAS Metric Comparison (Proposal System vs Baseline)
   2. Escalation Pattern Analysis (Tier Distribution)
-  3. Level Classifier Performance
-  4. Self-Correction Loop Convergence
-  5. FK Grade Validation
-  6. Computational Efficiency (Processing Time)
+  3. Self-Correction Loop Convergence
+  4. FK Grade Validation
+  5. DeepEval Metric Comparison (Independent Cross-Validation)
+  6. Level Classifier Performance
 """
 
 from __future__ import annotations
@@ -62,28 +62,32 @@ def _load_data() -> pd.DataFrame:
             query_index, final_tier, loop_number, is_final, self_correction_count,
             ragas_f, ragas_ar, ragas_cp, q_total,
             is_escalated, is_fallback,
-            execution_time_ms, fk_grade, created_at
+            execution_time_ms, fk_grade, created_at,
+            ir_hit_rate, ir_mrr,
+            deepeval_faithfulness, deepeval_answer_relevancy
         FROM rag_audit_log_bak
         WHERE ablation_condition IS NOT NULL
         ORDER BY created_at, loop_number
     """
+    conn = oracledb.connect(
+        user=s.ORACLE_USER, password=s.ORACLE_PASSWORD, dsn=s.ORACLE_DSN
+    )
     try:
-        conn = oracledb.connect(
-            user=s.ORACLE_USER, password=s.ORACLE_PASSWORD, dsn=s.ORACLE_DSN
-        )
         with conn.cursor() as cur:
             cur.execute(sql)
             cols = [d[0].lower() for d in cur.description]
             rows = cur.fetchall()
+    finally:
         conn.close()
-        if not rows:
-            return pd.DataFrame(columns=cols)
-        df = pd.DataFrame(rows, columns=cols)
-    except Exception as e:
-        logger.error("Data load failed: %s", e)
-        return pd.DataFrame()
+    if not rows:
+        return pd.DataFrame(columns=cols)
+    df = pd.DataFrame(rows, columns=cols)
 
-    for col in ["ragas_f", "ragas_ar", "ragas_cp", "q_total", "fk_grade", "query_index"]:
+    for col in [
+        "ragas_f", "ragas_ar", "ragas_cp", "q_total", "fk_grade", "query_index",
+        "ir_hit_rate", "ir_mrr",
+        "deepeval_faithfulness", "deepeval_answer_relevancy",
+    ]:
         df[col] = pd.to_numeric(df[col], errors="coerce")
     df["query_index"] = df["query_index"].astype("Int64")
 
@@ -218,7 +222,7 @@ def _plot_ragas_comparison(df):
         zorder=2,
     )
     ax.set_title(
-        "Table 7. RAGAS Metric Comparison — Proposal System (Tier 0, n=A) vs Baseline (matched query_index, Mean ± SEM)",
+        "Table 1. RAGAS Metric Comparison — Proposal System (Tier 0, n=A) vs Baseline (matched query_index, Mean ± SEM)",
         fontsize=12,
         fontweight="bold",
         pad=14,
@@ -381,7 +385,7 @@ def _plot_tier_distribution(df):
     ax2.grid(True, axis="y", alpha=0.4)
 
     fig.suptitle(
-        "Table 8. Tier Distribution — Escalation Pattern Analysis (Proposal System)",
+        "Table 2. Tier Distribution — Escalation Pattern Analysis (Proposal System)",
         fontsize=13,
         fontweight="bold",
         y=1.02,
@@ -467,108 +471,7 @@ def _table_tier_performance(df) -> pd.DataFrame:
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-# 3. Level Classifier Performance
-# ══════════════════════════════════════════════════════════════════════════════
-def _compute_classifier_metrics(df):
-    sub = (
-        df[
-            df["is_final"]
-            & df["ablation_condition"].isin(["A"])
-            & df["query_level_label"].notna()
-            & df["user_level"].notna()
-        ]
-        .sort_values("created_at")
-        .drop_duplicates(subset=["query_index"], keep="last")
-        .copy()
-    )
-    if sub.empty:
-        return None
-
-    label_map = {"P": "Professional", "C": "Consumer"}
-    sub["expected"] = sub["query_level_label"].map(label_map)
-    sub["predicted"] = sub["user_level"]
-    valid = sub[
-        sub["expected"].isin(["Professional", "Consumer"])
-        & sub["predicted"].isin(["Professional", "Consumer"])
-    ]
-    if len(valid) == 0:
-        return None
-
-    y_true = (valid["expected"] == "Professional").astype(int)
-    y_pred = (valid["predicted"] == "Professional").astype(int)
-    tp = int(((y_true == 1) & (y_pred == 1)).sum())
-    tn = int(((y_true == 0) & (y_pred == 0)).sum())
-    fp = int(((y_true == 0) & (y_pred == 1)).sum())
-    fn = int(((y_true == 1) & (y_pred == 0)).sum())
-    acc = (tp + tn) / (tp + tn + fp + fn) if (tp + tn + fp + fn) else 0
-    prec = tp / (tp + fp) if (tp + fp) else 0
-    rec = tp / (tp + fn) if (tp + fn) else 0
-    f1 = 2 * prec * rec / (prec + rec) if (prec + rec) else 0
-    return {
-        "Accuracy": acc,
-        "Precision": prec,
-        "Recall": rec,
-        "F1": f1,
-        "TP": tp,
-        "TN": tn,
-        "FP": fp,
-        "FN": fn,
-        "n": len(valid),
-    }
-
-
-def _plot_classifier(m):
-    keys = ["Accuracy", "Precision", "Recall", "F1"]
-    values = [m[k] for k in keys]
-    colors = ["#2980b9", "#27ae60", "#e67e22", "#9b59b6"]
-
-    fig, ax = _fig(8, 5)
-    bars = ax.bar(
-        keys,
-        values,
-        color=colors,
-        alpha=0.85,
-        edgecolor="white",
-        linewidth=1.2,
-        width=0.5,
-        zorder=3,
-    )
-    for bar, val in zip(bars, values):
-        ax.text(
-            bar.get_x() + bar.get_width() / 2,
-            bar.get_height() + 0.008,
-            f"{val*100:.1f}%",
-            ha="center",
-            va="bottom",
-            fontsize=13,
-            fontweight="bold",
-        )
-
-    ax.axhline(
-        0.9,
-        color="#e74c3c",
-        linestyle="--",
-        linewidth=1.5,
-        alpha=0.75,
-        label="90% Threshold",
-        zorder=2,
-    )
-    ax.set_title(
-        "Table 9. Level Classifier Performance (Proposal System)",
-        fontsize=13,
-        fontweight="bold",
-        pad=14,
-    )
-    ax.set_ylabel("Score", fontsize=11)
-    ax.set_ylim(0.0, 1.15)
-    ax.legend(fontsize=10)
-    ax.grid(True, axis="y", alpha=0.4)
-    fig.tight_layout()
-    return _savebuf(fig)
-
-
-# ══════════════════════════════════════════════════════════════════════════════
-# 4. Self-Correction Loop Convergence
+# 3. Self-Correction Loop Convergence
 # ══════════════════════════════════════════════════════════════════════════════
 def _plot_loop_convergence(df):
     sub = df[
@@ -641,7 +544,7 @@ def _plot_loop_convergence(df):
         label=f"τ_Q = {_THRESHOLD}",
     )
     ax.set_title(
-        "Table 10. Self-Correction Loop Convergence — Tier0 Q_total (Proposal System)",
+        "Table 3. Self-Correction Loop Convergence — Tier0 Q_total (Proposal System)",
         fontsize=13,
         fontweight="bold",
         pad=14,
@@ -681,7 +584,7 @@ def _table_loop(df):
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-# 5. FK Grade — Level Classifier Indirect Validation
+# 4. FK Grade — Level Classifier Indirect Validation
 # ══════════════════════════════════════════════════════════════════════════════
 _FK_CONSUMER_MAX = 9.0
 _FK_PROFESSIONAL_MIN = 12.0
@@ -797,7 +700,7 @@ def _plot_fk_grade(df):
     ax2.grid(True, axis="y", alpha=0.4)
 
     fig.suptitle(
-        "Table 11. FK Grade — Level Classifier Indirect Validation (is_final=1 only)",
+        "Table 4. FK Grade — Level Classifier Indirect Validation (is_final=1 only)",
         fontsize=13,
         fontweight="bold",
         y=1.02,
@@ -852,76 +755,262 @@ def _table_fk_grade(df):
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-# 6. Computational Efficiency (Processing Time)
+# 5. DeepEval Metric Comparison — Proposal System vs Baseline (independent judge)
 # ══════════════════════════════════════════════════════════════════════════════
-def _plot_efficiency(df):
+# RAGAS (F/AR/CP) is the metric the Self-Correction Loop directly optimizes, so it
+# can be self-referential. DeepEval is scored by an independent framework (judge
+# LLM: gpt-4o-mini), so comparing the two conditions on DeepEval alone, without
+# mixing in RAGAS, gives an "independent" validation.
+_DEEPEVAL_METRICS = [
+    ("deepeval_faithfulness", "Faithfulness (F)", "#2980b9"),
+    ("deepeval_answer_relevancy", "Answer Relevancy (AR)", "#e67e22"),
+]
+
+
+def _plot_deepeval_comparison(df):
     fin = _final(df)
     conds = _present_conds(df)
-    times, errs = [], []
-    for c in conds:
-        vals = (
-            fin[fin["ablation_condition"] == c]["execution_time_ms"].dropna().values
-            / 1000
-        )
-        times.append(vals.mean() if len(vals) else 0)
-        errs.append(
-            vals.std(ddof=1) / np.sqrt(len(vals)) * 1.96 if len(vals) > 1 else 0
-        )
+    if not conds:
+        return None
 
-    fig, ax = _fig(9, 5.5)
-    colors = [_COND_COLORS.get(c, "#95a5a6") for c in conds]
-    bars = ax.bar(
-        [_COND_SHORT[c] for c in conds],
-        times,
-        yerr=errs,
-        color=colors,
-        alpha=0.85,
-        edgecolor="white",
-        linewidth=1.2,
-        capsize=5,
-        zorder=3,
-        error_kw={"elinewidth": 1.5, "ecolor": "#2c3e50"},
+    x = np.arange(len(conds))
+    width = 0.22
+    offsets = np.linspace(-width, width, len(_DEEPEVAL_METRICS))
+
+    fig, ax = _fig(10, 6)
+    any_data = False
+    for i, (col, lbl, color) in enumerate(_DEEPEVAL_METRICS):
+        means, errs = [], []
+        for c in conds:
+            vals = _cond_subset(fin, c)[col].dropna().values
+            if len(vals):
+                any_data = True
+            means.append(vals.mean() if len(vals) else 0)
+            errs.append(vals.std(ddof=1) / np.sqrt(len(vals)) if len(vals) > 1 else 0)
+        bars = ax.bar(
+            x + offsets[i], means, width, label=lbl, color=color,
+            alpha=0.85, edgecolor="white", linewidth=1.2, zorder=3,
+        )
+        ax.errorbar(
+            x + offsets[i], means, yerr=errs, fmt="none", color="#2c3e50",
+            capsize=4, linewidth=1.3, zorder=4,
+        )
+        for bar, mean in zip(bars, means):
+            ax.text(
+                bar.get_x() + bar.get_width() / 2, bar.get_height() + 0.012,
+                f"{mean:.3f}", ha="center", va="bottom", fontsize=8, fontweight="bold",
+            )
+
+    if not any_data:
+        plt.close(fig)
+        return None
+
+    ax.axhline(
+        _THRESHOLD, color="#e74c3c", linestyle="--", linewidth=1.5, alpha=0.75,
+        label=f"Reference ({_THRESHOLD})", zorder=2,
     )
-    for bar, t in zip(bars, times):
-        ax.text(
-            bar.get_x() + bar.get_width() / 2,
-            bar.get_height() + 0.5,
-            f"{t:.1f}s",
-            ha="center",
-            va="bottom",
-            fontsize=11,
-            fontweight="bold",
-        )
-
     ax.set_title(
-        "Table 12. Processing Time per Query — Proposal System vs Baseline",
-        fontsize=13,
-        fontweight="bold",
-        pad=14,
+        "Table 5. DeepEval Metric Comparison — Proposal System (Tier 0, n=A) vs Baseline "
+        "(matched query_index, Mean ± SEM)",
+        fontsize=12, fontweight="bold", pad=14,
     )
-    ax.set_ylabel("Mean Processing Time (sec, 95% CI)", fontsize=11)
-    ax.set_ylim(0, (max(times) if times else 10) * 1.4)
+    ax.set_xticks(x)
+    ax.set_xticklabels([_COND_SHORT[c] for c in conds], fontsize=10)
+    ax.set_ylabel("Mean DeepEval Score", fontsize=11)
+    ax.set_ylim(0.45, 1.15)
+    ax.legend(fontsize=10, loc="lower right")
     ax.grid(True, axis="y", alpha=0.4)
     fig.tight_layout()
     return _savebuf(fig)
 
 
-def _table_efficiency(df):
+def _table_deepeval_comparison(df):
     fin = _final(df)
     rows = []
     for c in _COND_ORDER:
-        sub = fin[fin["ablation_condition"] == c]
-        t = sub["execution_time_ms"].dropna() / 1000
+        sub = _cond_subset(fin, c)
+
+        def ms(col, _sub=sub):
+            v = _sub[col].dropna()
+            return f"{v.mean():.3f} ± {v.std(ddof=1) / np.sqrt(len(v)):.3f}" if len(v) > 1 else "—"
+
+        n_tier0 = len(_cond_subset(fin, "A"))
+        note = f" (Tier 0 only, n={n_tier0})" if c == "A" else f" (matched query_index, n={len(sub)})"
         rows.append(
             {
-                "Condition": _COND_LABELS.get(c, c),
-                "Mean Processing Time (sec)": (
-                    f"{t.mean():.1f} ± {t.std(ddof=1):.1f}" if len(t) > 1 else "—"
-                ),
+                "Condition": _COND_LABELS.get(c, c) + note,
+                "Faithfulness (F)": ms("deepeval_faithfulness"),
+                "Answer Relevancy (AR)": ms("deepeval_answer_relevancy"),
                 "n": len(sub),
             }
         )
     return pd.DataFrame(rows)
+
+
+def _table_deepeval_ttest(df) -> pd.DataFrame:
+    """Paired t-test (DeepEval only): A (Tier 0) vs E (matched query_index counterpart)."""
+    try:
+        from scipy import stats as _stats
+    except ImportError:
+        return pd.DataFrame()
+
+    fin = _final(df)
+    tier0_idx = _tier0_qidx(fin)
+    if not tier0_idx:
+        return pd.DataFrame()
+
+    a_sub = fin[(fin["ablation_condition"] == "A") & (fin["final_tier"] == 0)].copy()
+    e_sub = fin[
+        (fin["ablation_condition"] == "E")
+        & fin["query_index"].dropna().astype(int).isin(tier0_idx)
+    ].copy()
+
+    deepeval_cols = ["deepeval_faithfulness", "deepeval_answer_relevancy"]
+    merged = a_sub.merge(
+        e_sub[["query_index"] + deepeval_cols],
+        on="query_index",
+        suffixes=("_a", "_e"),
+        how="inner",
+    )
+
+    metric_pairs = [
+        ("deepeval_faithfulness_a", "deepeval_faithfulness_e", "Faithfulness (F)"),
+        ("deepeval_answer_relevancy_a", "deepeval_answer_relevancy_e", "Answer Relevancy (AR)"),
+    ]
+
+    rows = []
+    for col_a, col_e, label in metric_pairs:
+        pairs = merged[[col_a, col_e]].dropna()
+        n = len(pairs)
+        if n < 2:
+            rows.append(
+                {"Metric": label, "N": n, "A mean": "—", "E mean": "—",
+                 "Δ (A−E)": "—", "t": "—", "p-value": "—", "sig": "—"}
+            )
+            continue
+        a_vals = pairs[col_a].values
+        e_vals = pairs[col_e].values
+        t_stat, p_val = _stats.ttest_rel(a_vals, e_vals)
+        sig = (
+            "***" if p_val < 0.001 else
+            "**"  if p_val < 0.01  else
+            "*"   if p_val < 0.05  else
+            "†"   if p_val < 0.10  else "ns"
+        )
+        rows.append(
+            {
+                "Metric": label,
+                "N": n,
+                "A mean": f"{a_vals.mean():.4f}",
+                "E mean": f"{e_vals.mean():.4f}",
+                "Δ (A−E)": f"{a_vals.mean() - e_vals.mean():+.4f}",
+                "t": f"{t_stat:.3f}",
+                "p-value": f"{p_val:.4f}",
+                "sig": sig,
+            }
+        )
+    return pd.DataFrame(rows)
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# 6. Level Classifier Performance
+# ══════════════════════════════════════════════════════════════════════════════
+def _compute_classifier_metrics(df):
+    sub = (
+        df[
+            df["is_final"]
+            & df["ablation_condition"].isin(["A"])
+            & df["query_level_label"].notna()
+            & df["user_level"].notna()
+        ]
+        .sort_values("created_at")
+        .drop_duplicates(subset=["query_index"], keep="last")
+        .copy()
+    )
+    if sub.empty:
+        return None
+
+    label_map = {"P": "Professional", "C": "Consumer"}
+    sub["expected"] = sub["query_level_label"].map(label_map)
+    sub["predicted"] = sub["user_level"]
+    valid = sub[
+        sub["expected"].isin(["Professional", "Consumer"])
+        & sub["predicted"].isin(["Professional", "Consumer"])
+    ]
+    if len(valid) == 0:
+        return None
+
+    y_true = (valid["expected"] == "Professional").astype(int)
+    y_pred = (valid["predicted"] == "Professional").astype(int)
+    tp = int(((y_true == 1) & (y_pred == 1)).sum())
+    tn = int(((y_true == 0) & (y_pred == 0)).sum())
+    fp = int(((y_true == 0) & (y_pred == 1)).sum())
+    fn = int(((y_true == 1) & (y_pred == 0)).sum())
+    acc = (tp + tn) / (tp + tn + fp + fn) if (tp + tn + fp + fn) else 0
+    prec = tp / (tp + fp) if (tp + fp) else 0
+    rec = tp / (tp + fn) if (tp + fn) else 0
+    f1 = 2 * prec * rec / (prec + rec) if (prec + rec) else 0
+    return {
+        "Accuracy": acc,
+        "Precision": prec,
+        "Recall": rec,
+        "F1": f1,
+        "TP": tp,
+        "TN": tn,
+        "FP": fp,
+        "FN": fn,
+        "n": len(valid),
+    }
+
+
+def _plot_classifier(m):
+    keys = ["Accuracy", "Precision", "Recall", "F1"]
+    values = [m[k] for k in keys]
+    colors = ["#2980b9", "#27ae60", "#e67e22", "#9b59b6"]
+
+    fig, ax = _fig(8, 5)
+    bars = ax.bar(
+        keys,
+        values,
+        color=colors,
+        alpha=0.85,
+        edgecolor="white",
+        linewidth=1.2,
+        width=0.5,
+        zorder=3,
+    )
+    for bar, val in zip(bars, values):
+        ax.text(
+            bar.get_x() + bar.get_width() / 2,
+            bar.get_height() + 0.008,
+            f"{val*100:.1f}%",
+            ha="center",
+            va="bottom",
+            fontsize=13,
+            fontweight="bold",
+        )
+
+    ax.axhline(
+        0.9,
+        color="#e74c3c",
+        linestyle="--",
+        linewidth=1.5,
+        alpha=0.75,
+        label="90% Threshold",
+        zorder=2,
+    )
+    ax.set_title(
+        "Table 6. Level Classifier Performance (Proposal System)",
+        fontsize=13,
+        fontweight="bold",
+        pad=14,
+    )
+    ax.set_ylabel("Score", fontsize=11)
+    ax.set_ylim(0.0, 1.15)
+    ax.legend(fontsize=10)
+    ax.grid(True, axis="y", alpha=0.4)
+    fig.tight_layout()
+    return _savebuf(fig)
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -951,11 +1040,22 @@ def render_performance_viz() -> None:
     st.title("Performance Visualization")
     st.caption("System performance visualization — Oracle `rag_audit_log_bak` (Proposal System vs Baseline)")
 
-    with st.spinner("Loading data..."):
-        df = _load_data()
+    try:
+        with st.spinner("Loading data..."):
+            df = _load_data()
+    except Exception as e:
+        logger.error("Data load failed: %s", e)
+        st.error(f"Failed to load data. Please check the Oracle connection.\n\n`{e}`")
+        if st.button("Retry", type="secondary"):
+            st.cache_data.clear()
+            st.rerun()
+        return
 
     if df.empty:
-        st.error("Failed to load data. Please check the Oracle connection.")
+        st.warning("Query succeeded but returned no rows.")
+        if st.button("Refresh", type="secondary"):
+            st.cache_data.clear()
+            st.rerun()
         return
 
     if st.button("Refresh", type="secondary"):
@@ -966,7 +1066,7 @@ def render_performance_viz() -> None:
     _render_summary_cards(df)
     st.markdown("---")
 
-    st.markdown("### Table 7. RAGAS Metric Comparison")
+    st.markdown("### Table 1. RAGAS Metric Comparison")
     st.caption(
         "**Fair subset comparison** — Proposal System: Tier 0 questions only (self-correction applied)  |  "
         "Baseline: same query_index counterparts only (matched set)  |  Mean ± SEM"
@@ -994,7 +1094,7 @@ def render_performance_viz() -> None:
         st.info("scipy not available or insufficient data for t-test.")
     st.markdown("---")
 
-    st.markdown("### Table 8. Escalation Pattern Analysis (Tier Distribution — Proposal System)")
+    st.markdown("### Table 2. Escalation Pattern Analysis (Tier Distribution — Proposal System)")
     st.caption("Tier 0 → 1 → 2 distribution in the Proposal System condition")
     buf = _plot_tier_distribution(df)
     if buf:
@@ -1027,7 +1127,66 @@ def render_performance_viz() -> None:
         st.caption("No data — run Condition A batch experiment first, then click Refresh.")
     st.markdown("---")
 
-    st.markdown("### Table 9. Level Classifier Performance (Proposal System)")
+    st.markdown("### Table 3. Self-Correction Loop Convergence (Proposal System)")
+    st.caption("Mean Q_total and convergence rate per loop iteration (τ_Q = 0.8)")
+    buf = _plot_loop_convergence(df)
+    if buf:
+        st.image(buf, use_container_width=True)
+    loop_tbl = _table_loop(df)
+    if not loop_tbl.empty:
+        st.dataframe(loop_tbl, hide_index=True, use_container_width=True)
+    else:
+        st.info("No data for Condition A.")
+    st.markdown("---")
+
+    st.markdown("### Table 4. FK Grade — Level Classifier Indirect Validation")
+    st.caption(
+        "FK Grade computed on the English RAG answer  |  "
+        "Consumer target ≤ 9  |  Professional target ≥ 12  |  is_final=1 only"
+    )
+    buf = _plot_fk_grade(df)
+    if buf:
+        st.image(buf, use_container_width=True)
+    else:
+        st.info("No fk_grade data available.")
+    fk_tbl = _table_fk_grade(df)
+    if not fk_tbl.empty:
+        st.dataframe(fk_tbl, hide_index=True, use_container_width=True)
+    st.markdown("---")
+
+    st.markdown("### Table 5. DeepEval Metric Comparison (Independent Cross-Validation)")
+    st.caption(
+        "**Fair subset comparison** — Proposal System: Tier 0 questions only (self-correction applied)  |  "
+        "Baseline: same query_index counterparts only (matched set)  |  Mean ± SEM  |  "
+        "RAGAS (F/AR/CP) is the metric the Self-Correction Loop directly optimizes, so it can be self-referential. "
+        "Here the two conditions are compared using scores from an independent framework (DeepEval, judged by gpt-4o-mini) instead, without mixing in RAGAS."
+    )
+    buf = _plot_deepeval_comparison(df)
+    if buf:
+        st.image(buf, use_container_width=True)
+    else:
+        st.info("No DeepEval data available. (disease 라벨이 있는 STQS/ablation 요청 필요)")
+    st.dataframe(_table_deepeval_comparison(df), hide_index=True, use_container_width=True)
+
+    st.markdown("#### Paired t-test (A Tier 0 vs E matched counterpart) — DeepEval only")
+    st.caption("Two-tailed paired t-test per metric  |  \\*\\*\\* p<.001  \\*\\* p<.01  \\* p<.05  † p<.10  ns p≥.10")
+    deepeval_ttest_tbl = _table_deepeval_ttest(df)
+    if not deepeval_ttest_tbl.empty:
+        st.dataframe(
+            deepeval_ttest_tbl.style.applymap(
+                lambda v: "color: #e74c3c; font-weight: bold"
+                if v in ("***", "**", "*")
+                else ("color: #e67e22" if v == "†" else ""),
+                subset=["sig"],
+            ),
+            hide_index=True,
+            use_container_width=True,
+        )
+    else:
+        st.info("scipy not available or insufficient data for t-test.")
+    st.markdown("---")
+
+    st.markdown("### Table 6. Level Classifier Performance (Proposal System)")
     st.caption(
         "query_level_label (P/C) vs user_level — Accuracy / Precision / Recall / F1"
     )
@@ -1059,37 +1218,3 @@ def render_performance_viz() -> None:
         st.info("No classifier evaluation data. (query_level_label column required)")
     st.markdown("---")
 
-    st.markdown("### Table 10. Self-Correction Loop Convergence (Proposal System)")
-    st.caption("Mean Q_total and convergence rate per loop iteration (τ_Q = 0.8)")
-    buf = _plot_loop_convergence(df)
-    if buf:
-        st.image(buf, use_container_width=True)
-    loop_tbl = _table_loop(df)
-    if not loop_tbl.empty:
-        st.dataframe(loop_tbl, hide_index=True, use_container_width=True)
-    else:
-        st.info("No data for Condition A.")
-    st.markdown("---")
-
-    st.markdown("### Table 11. FK Grade — Level Classifier Indirect Validation")
-    st.caption(
-        "FK Grade computed on the English RAG answer  |  "
-        "Consumer target ≤ 9  |  Professional target ≥ 12  |  is_final=1 only"
-    )
-    buf = _plot_fk_grade(df)
-    if buf:
-        st.image(buf, use_container_width=True)
-    else:
-        st.info("No fk_grade data available.")
-    fk_tbl = _table_fk_grade(df)
-    if not fk_tbl.empty:
-        st.dataframe(fk_tbl, hide_index=True, use_container_width=True)
-    st.markdown("---")
-
-    st.markdown("### Table 12. Computational Efficiency (Processing Time)")
-    st.caption("Mean processing time per query by condition (sec, 95% CI)")
-    buf = _plot_efficiency(df)
-    if buf:
-        st.image(buf, use_container_width=True)
-    st.dataframe(_table_efficiency(df), hide_index=True, use_container_width=True)
-    st.markdown("---")

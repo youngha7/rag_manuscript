@@ -23,7 +23,7 @@
 - 3단계 지식 계층(Tier 0: VectorDB, Tier 1: LLM 학습데이터, Tier 2: 웹검색) 기반 검색
 - 사용자 수준별 맞춤 답변 생성 (Flesch-Kincaid Grade Level 목표 적용)
 - RAGAS 자동 품질 평가 및 Self-Corrective Loop (Proposal System vs Baseline)
-- 감사 로그 저장 (request_id당 N+1행: 평가마다 중간 행 + 최종 행, fk_grade 포함) 및 성능 시각화 대시보드 (7개 섹션)
+- 감사 로그 저장 (request_id당 N+1행: 평가마다 중간 행 + 최종 행, fk_grade 포함) 및 성능 시각화 대시보드 (8개 섹션)
 - STQS-240 표준 질문 세트를 이용한 시스템 성능 평가 실험 (main.ipynb)
 
 ### 1.3 정의 및 약어
@@ -38,7 +38,7 @@
 | Q_total | 종합 품질 점수. 0.4·F + 0.4·AR + 0.2·CP |
 | 판정 LLM 분리 | Quality Gate(RAGAS)와 답변 생성에 서로 다른 LLM을 사용하는 설계. RAGAS는 Claude, 답변 생성은 OpenAI/Gemini 토글로 고정해 순환성(circularity) 편향을 방지 |
 | IR Hit Rate / MRR | 전통적 정보검색(IR) 지표. `disease` 정답 라벨과 검색 출처 파일명을 매칭해 계산하는 성능평가 전용 지표 (게이트 미사용) |
-| TruLens RAG Triad | RAGAS와 별개 프레임워크(Gemini 판정)로 Context Relevance/Groundedness/Answer Relevance를 계산해 F/AR/CP를 교차검증하는 성능평가 전용 지표 (게이트 미사용) |
+| DeepEval | RAGAS와 별개 프레임워크(`gpt-4o-mini` 판정)로 Faithfulness/Answer Relevancy를 계산해 F/AR을 교차검증하는 성능평가 전용 지표 (게이트 미사용). Contextual Relevancy는 더 이상 사용하지 않음 |
 | FK Grade | Flesch-Kincaid Grade Level. 영어 텍스트 가독성 지표. 높을수록 어려운 글. Consumer 목표 ≤9, Professional 목표 ≥12 |
 | Self-Corrective Loop | RAGAS 기준 미달 시 쿼리를 재최적화하여 재검색하는 반복 루프 |
 | Tier | 지식 검색 계층. Tier 0(VectorDB) → Tier 1(LLM) → Tier 2(Web) |
@@ -87,10 +87,10 @@
   └─ 감사 로그 저장 (N+1행: save_loop_log + save_audit_log)
   │
   ▼
-[Oracle Database] — rag_audit_log (N+1행/요청, fk_grade 포함)
+[Oracle Database] — rag_audit_log_bak (N+1행/요청, fk_grade 포함)
   │
   ▼
-[성능 대시보드 — 7개 섹션 (Proposal System vs Baseline)]
+[성능 대시보드 — 8개 섹션 (Proposal System vs Baseline)]
 
 연구자
   │
@@ -247,20 +247,19 @@
 | **설명** | main.ipynb는 STQS-240 표준 질문 세트(240건)와 2가지 조건(A/E)을 교차 실험하여 결과를 Oracle DB에 자동 저장해야 한다. |
 | **입력** | STQS-240 질문 목록 (disease, level, q_num, question) 4-tuple, 각 질문의 query_index (1-240) |
 | **처리** | 2조건 × 240질문 = 480회 run_medical_self_corrective_rag() 호출 |
-| **출력** | rag_audit_log에 N+1행 × 480요청 INSERT (ablation_condition, query_index, disease 등 메타데이터 포함) |
+| **출력** | rag_audit_log_bak에 N+1행 × 480요청 INSERT (ablation_condition, query_index, disease 등 메타데이터 포함) |
 
 ---
 
-### 3.7 할루시네이션 감지
+### 3.7 할루시네이션 방지
 
 | 요구사항 ID | FR-012 |
 |-------------|--------|
-| **요구사항명** | 의료 도메인 할루시네이션 탐지 |
+| **요구사항명** | 의료 도메인 할루시네이션 방지 및 품질 평가 |
 | **우선순위** | 필수 |
-| **설명** | 시스템은 답변에서 수치, 약물 배합, 치료 단계 등 의료 도메인 특화 할루시네이션을 자동 감지해야 한다. |
-| **감지 패턴** | ① 용량 수치 (mg/ml/g 등), ② 약물 배합 조합, ③ 치료 단계 표현 |
-| **처리** | 답변 내 패턴이 검색된 컨텍스트에 없는 경우 hallucination_flags에 추가 |
-| **출력** | 할루시네이션 유형 및 해당 표현 목록, hallucination_count (DB 저장) |
+| **설명** | 시스템은 프롬프트 수준에서 답변이 검색된 컨텍스트에만 근거하도록 강제하고(`agents/rag_engine.py` 시스템 프롬프트: 용량·기전·권고사항을 컨텍스트 밖에서 추가하지 말 것), 사후적으로 RAGAS Faithfulness(F) 점수로 근거 없는 서술 비율을 정량 평가한다. |
+| **현재 구현** | 패턴 매칭 기반의 별도 할루시네이션 탐지 모듈(`hallucination_flags`/`hallucination_count`)은 존재하지 않는다 — Faithfulness(F) 점수가 이 역할을 대신하며, F < 0.8이면 Self-Corrective Loop가 재시도를 유발한다. |
+| **출력** | Faithfulness(F) 점수 (0~1), `critic_feedback`(기준 미달 원인 요약) |
 
 ---
 
@@ -326,17 +325,17 @@
 
 | 요구사항 ID | FR-019 |
 |-------------|--------|
-| **요구사항명** | 성능 시각화 — 7개 섹션 |
+| **요구사항명** | 성능 시각화 — 8개 섹션 |
 | **우선순위** | 선택 |
-| **설명** | 시스템은 rag_audit_log 데이터를 기반으로 Proposal System vs Baseline 성능 비교를 위한 7개 섹션의 시각화를 제공해야 한다. 모든 matplotlib 차트 텍스트는 영어로 작성한다 (배포 환경 폰트 제한). |
-| **섹션 1** | RAGAS 메트릭 비교: Proposal System / Baseline F / AR / CP 평균 ± 95% CI 막대 차트 |
-| **섹션 2** | 환각 감소 효과: 조건별 환각 감지 비율 및 Baseline 대비 감소율 |
-| **섹션 3** | 에스컬레이션 패턴: Proposal System Tier 분포 파이차트 + 막대차트 + **전문가/일반인/전체 쿼리 건수 표** |
-| **섹션 4** | 수준 분류기 성능: Proposal System 기준 Accuracy / Precision / Recall / F1 |
-| **섹션 4-b** | FK Grade 간접 검증: user_level별 박스플롯 + 조건별 평균 막대차트 + 목표 달성률 표 |
-| **섹션 5** | 자가 교정 루프 수렴: 루프 번호별 Mean Q_total + 95% CI + 수렴율 |
-| **섹션 6** | FK Grade 검증: Consumer/Professional 목표 달성률 시각화 |
-| **섹션 7** | 계산 효율성: 조건별 평균 처리 시간 (초, 95% CI) |
+| **설명** | 시스템은 rag_audit_log_bak 데이터를 기반으로 Proposal System vs Baseline 성능 비교를 위한 8개 섹션의 시각화를 제공해야 한다. 모든 matplotlib 차트 텍스트는 영어로 작성한다 (배포 환경 폰트 제한). |
+| **섹션 1** | RAGAS 메트릭 비교: Proposal System(Tier 0) / Baseline(matched query_index) F / AR / CP / Q_total 평균 ± SEM 막대 차트 + paired t-test |
+| **섹션 2** | 에스컬레이션 패턴: Proposal System Tier 0/1/2 분포 및 조건별 RAGAS 성능 표 |
+| **섹션 3** | 자가 교정 루프 수렴: 루프 번호별 Mean Q_total + 95% CI + 수렴율(τ_Q=0.8) |
+| **섹션 4** | FK Grade 간접 검증: user_level별 박스플롯 + 조건별 평균 막대차트 + 목표 달성률 표(is_final=1 only) |
+| **섹션 5** | 계산 효율성: 조건별 평균 처리 시간 (초, 95% CI) |
+| **섹션 6** | 수준 분류기 성능: Proposal System 기준 Accuracy / Precision / Recall / F1, TP/TN/FP/FN |
+| **섹션 7** | DeepEval 메트릭 비교: Proposal System(Tier 0) / Baseline(matched query_index) Faithfulness / Answer Relevancy 독립 교차검증 + paired t-test |
+| **섹션 8** | 검색 품질(IR): Tier 0, is_final=1 한정 Hit Rate / MRR — RAGAS CP와의 교차검증 |
 
 ---
 
@@ -355,14 +354,14 @@
 
 | 요구사항 ID | FR-021 |
 |-------------|--------|
-| **요구사항명** | 성능평가 전용 지표 (IR Hit Rate/MRR, TruLens RAG Triad) |
+| **요구사항명** | 성능평가 전용 지표 (IR Hit Rate/MRR, DeepEval) |
 | **우선순위** | 선택 |
 | **설명** | 시스템은 `disease`(STQS-240/ablation 정답 라벨)가 있는 요청에 한해, RAGAS(FR-008)와 독립적으로 전통적 정보검색 지표와 별도 프레임워크 기반 교차검증 지표를 계산해 감사 로그에 기록해야 한다. Self-Corrective Loop(FR-009)의 성공/에스컬레이션 판단에는 관여하지 않는다. |
 | **배경** | Critic Agent가 RAGAS를 런타임 Quality Gate로 사용하면서 최종 성능평가까지 RAGAS 단독에 의존하면 "동일 지표로 최적화하고 동일 지표로 평가"하는 순환성(circularity) 편향 비판이 발생할 수 있어, 독립 지표로 교차검증한다. |
 | **IR Hit Rate / MRR** | 검색된 청크의 출처 파일명(`context_sources`)에 `disease`명이 포함되는지로 정답 문서 적중 여부(Hit Rate, 0/1)와 첫 적중 순위의 역수(MRR)를 계산. LLM 불필요, 순수 문자열 매칭 |
-| **TruLens RAG Triad** | Context Relevance / Groundedness / Answer Relevance 3종을 RAGAS와 다른 프레임워크·다른 판정 모델(**Gemini**, `GEMINI_AUX_MODEL`)로 계산해 F/AR/CP를 교차검증 |
-| **생략 조건** | `disease`가 없는 일반 운영 쿼리는 ground truth가 없거나(IR) 교차검증 목적이 없어(TruLens) 계산을 생략하고 NULL로 저장한다 (불필요한 LLM 호출 비용 방지) |
-| **저장** | `hit_rate_score`, `mrr_score`, `trulens_context_relevance`, `trulens_groundedness`, `trulens_answer_relevance` → 감사 로그의 `ir_hit_rate`, `ir_mrr`, `trulens_context_relevance`, `trulens_groundedness`, `trulens_answer_relevance` 컬럼 |
+| **DeepEval** | Faithfulness / Answer Relevancy 2종을 RAGAS와 다른 프레임워크(판정 LLM은 `DEEPEVAL_LLM_MODEL`, 기본 **gpt-4o-mini**)로 계산해 F/AR을 교차검증. Contextual Relevancy는 더 이상 사용하지 않음 |
+| **생략 조건** | `disease`가 없는 일반 운영 쿼리는 ground truth가 없거나(IR) 교차검증 목적이 없어(DeepEval) 계산을 생략하고 NULL로 저장한다 (불필요한 LLM 호출 비용 방지) |
+| **저장** | `hit_rate_score`, `mrr_score`, `deepeval_faithfulness`, `deepeval_answer_relevancy` → 감사 로그의 `ir_hit_rate`, `ir_mrr`, `deepeval_faithfulness`, `deepeval_answer_relevancy` 컬럼 |
 
 ---
 
@@ -428,7 +427,7 @@
 |-----------|------|------|
 | OpenAI API | REST API | GPT 모델을 통한 답변 생성, 쿼리 재작성, 분류 |
 | Anthropic API | REST API | Claude 모델을 통한 RAGAS 판정 (F/AR/CP). 답변 생성 LLM과 무관하게 항상 사용 (필수) |
-| Google Gemini API | REST API (LiteLLM 경유) | TruLens RAG Triad 판정. `disease` 있는 STQS/ablation 요청에서만 사용 |
+| Google Gemini API | REST API | 답변 생성 LLM 백엔드 토글 (`llm_provider="gemini"` 지정 시 선택적으로 사용). DeepEval 판정에는 더 이상 사용하지 않음(현재는 OpenAI gpt-4o-mini) |
 | Oracle Database | oracledb 직접 연결 | 감사 로그 저장 및 조회 (N+1행 INSERT only) |
 | DuckDuckGo Search | 라이브러리 | Tier 2 웹검색 |
 | HuggingFace | 모델 다운로드 | **BAAI/bge-base-en-v1.5** 임베딩 모델 (768차원) |
@@ -440,7 +439,7 @@
 | 메인 질의 화면 | 텍스트 입력, 실행 상태 표시, 점수 카드 (F/AR/CP/Q_total), 답변 출력, 로그 조회 |
 | 사이드바 | 사용자 페르소나 선택, LLM 백엔드 선택, 인덱스 재빌더, 대시보드 메뉴 |
 | 로그 조회 화면 | 감사 로그 목록 및 상세 조회 (tier_path, self_correction_count, fk_grade 포함) |
-| 성능 시각화 화면 | Proposal System vs Baseline 7개 섹션 차트 및 요약 통계 카드 |
+| 성능 시각화 화면 | Proposal System vs Baseline 8개 섹션 차트 및 요약 통계 카드 |
 
 ---
 
@@ -455,7 +454,7 @@
 ### 6.2 저장 데이터
 
 - **FAISS 인덱스**: `db/msd_faiss.index/` (LangChain FAISS, BAAI/bge-base-en-v1.5 768차원)
-- **감사 로그**: Oracle DB의 rag_audit_log 테이블 (request_id당 N+1행, fk_grade 포함, final_answer CLOB)
+- **감사 로그**: Oracle DB의 rag_audit_log_bak 테이블 (request_id당 N+1행, fk_grade 포함, final_answer CLOB)
 
 ### 6.3 출력 데이터
 

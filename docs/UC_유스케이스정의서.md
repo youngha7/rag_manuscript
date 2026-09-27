@@ -15,7 +15,7 @@
 | **연구자 / 시스템 관리자** | 주 액터 | 인덱스 재빌드, 로그 조회, 성능 모니터링, 시스템 성능 평가 실험 수행 |
 | **OpenAI API** | 보조 액터 | 사용자 분류, 쿼리 최적화, 답변 생성 수행 |
 | **Anthropic API** | 보조 액터 | RAGAS 판정(F/AR/CP) 수행. 답변 생성 LLM과 무관하게 항상 사용 (순환성 방지) |
-| **Google Gemini API** | 보조 액터 | TruLens RAG Triad 판정 수행 (성능평가 전용, `disease` 있는 요청만) |
+| **Google Gemini API** | 보조 액터 | 답변 생성 LLM 백엔드 토글 (`llm_provider="gemini"` 지정 시 선택적으로 사용) |
 | **FAISS VectorDB** | 보조 액터 | 벡터 유사도 검색 수행 |
 | **Oracle DB** | 보조 액터 | 감사 로그 저장 및 조회 (N+1행 INSERT) |
 | **DuckDuckGo** | 보조 액터 | Tier 2 웹검색 수행 |

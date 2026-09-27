@@ -77,8 +77,8 @@ level_classifier ─► adaptive_query_rewriter ─► rag_engine ─► critic_
 `disease`(STQS-240/ablation 정답 라벨)가 있는 요청에서만 추가로 계산해 DB에 기록한다. 일반 운영 쿼리는 ground truth가 없거나 교차검증 목적이 없어 계산 자체를 생략한다(불필요한 LLM 호출·비용 방지).
 
 - **IR Hit Rate / MRR**: 검색된 청크의 출처 파일명(`context_sources`)에 `disease`명이 포함되는지로 정답 문서 적중 여부(Hit Rate)와 첫 적중 순위의 역수(MRR)를 계산하는 전통적 정보검색 지표. LLM 불필요, 순수 문자열 매칭.
-- **TruLens RAG Triad**: Context Relevance / Groundedness / Answer Relevance 3종을 RAGAS와 **다른 프레임워크·다른 판정 모델(Gemini)** 로 계산해 F/AR/CP를 교차검증한다. RAGAS 단독 평가의 순환성 비판을 피하기 위한 독립 지표.
-- 출력: `hit_rate_score`, `mrr_score`, `trulens_context_relevance`, `trulens_groundedness`, `trulens_answer_relevance` (일반 운영 시 전부 `None`)
+- **DeepEval**: Faithfulness / Answer Relevancy 2종을 RAGAS와 **다른 프레임워크**(판정 LLM은 `DEEPEVAL_LLM_MODEL`, 기본 `gpt-4o-mini`)로 계산해 F/AR을 교차검증한다. RAGAS 단독 평가의 순환성 비판을 피하기 위한 독립 지표. Contextual Relevancy는 더 이상 사용하지 않는다.
+- 출력: `hit_rate_score`, `mrr_score`, `deepeval_faithfulness`, `deepeval_answer_relevancy` (일반 운영 시 전부 `None`)
 
 ## 5. output_agent — 출력 에이전트
 

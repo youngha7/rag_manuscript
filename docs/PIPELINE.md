@@ -83,7 +83,7 @@ LLM 기반 RAGAS 평가기로 3가지 지표를 산출한다.
 | 지표 | 방식 | 목적 |
 |------|------|------|
 | IR Hit Rate / MRR | `context_sources`(검색 청크 출처 파일명)에 `disease`명이 포함되는지 문자열 매칭 (LLM 불필요) | 검색 성능을 전통적 IR 지표로 독립 검증 |
-| TruLens RAG Triad (Context Relevance / Groundedness / Answer Relevance) | RAGAS와 별개 프레임워크, **Gemini**(`GEMINI_AUX_MODEL`)로 판정 | RAGAS 단독 평가의 순환성 비판을 피하기 위한 F/AR/CP 교차검증 |
+| DeepEval (Faithfulness / Answer Relevancy) | RAGAS와 별개 프레임워크, **gpt-4o-mini**(`DEEPEVAL_LLM_MODEL`)로 판정 | RAGAS 단독 평가의 순환성 비판을 피하기 위한 F/AR 교차검증. Contextual Relevancy는 더 이상 사용하지 않음 |
 
 `disease`가 없는 일반 운영 쿼리는 ground truth가 없거나 교차검증 목적이 없어 계산 자체를 생략하며, DB에는 `NULL`로 저장된다.
 

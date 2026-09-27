@@ -24,6 +24,9 @@
 | v5.0 | `hallucination_detected`, `hallucination_count` 컬럼 제거 |
 | v5.1 | `final_answer` VARCHAR2→CLOB, `query_index` 범위 1-240으로 확대, PostgreSQL → Oracle Database 마이그레이션 |
 | v5.2 | 성능평가 전용 지표 5종 추가: `ir_hit_rate`, `ir_mrr`, `trulens_context_relevance`, `trulens_groundedness`, `trulens_answer_relevance`. critic 루프의 Quality Gate(F/AR/CP)와는 분리되어 기록 전용으로만 사용. 동시에 RAGAS 판정 LLM을 **Claude**로 고정(답변 생성 LLM과 분리)하고 TruLens 판정 LLM은 **Gemini**로 지정 — RAGAS 단독·동일 모델 평가의 순환성(circularity) 비판을 피하기 위한 독립 교차검증 설계 |
+| v5.3 (2026-08-30) | 판정 프레임워크를 TruLens → DeepEval로 교체 (판정 LLM은 Gemini로 동일 유지). `trulens_context_relevance`/`trulens_groundedness`/`trulens_answer_relevance` 3개 컬럼 삭제, `deepeval_contextual_relevancy`/`deepeval_faithfulness`/`deepeval_answer_relevancy` 3개 컬럼 추가 |
+| v5.4/v5.5 | `deepeval_contextual_precision`/`deepeval_contextual_recall`로 실험했다가 `deepeval_contextual_relevancy`로 롤백. DeepEval 판정 LLM을 Gemini → **OpenAI gpt-4o-mini**(`DEEPEVAL_LLM_MODEL`)로 통일 (RAGAS 판정 LLM도 이미 Claude 고정, 비용·단순화 목적) |
+| v5.6 (2026-09-21) | `deepeval_contextual_relevancy` 컬럼 삭제 — DeepEval은 Faithfulness/Answer Relevancy 2종만 유지. **실제 운영 테이블은 `rag_audit_log_bak`** (`infra/audit_logger.py`가 INSERT하는 대상). 아래 3.1의 `rag_audit_log` 정의는 동일 스키마의 참고용 템플릿이며, 이 문서의 DDL 예시를 실제 적용할 때는 테이블명을 `rag_audit_log_bak`로 바꿔야 한다 |
 
 ### 1.2 데이터베이스 구성
 
@@ -32,7 +35,7 @@
 | **DBMS** | Oracle Database |
 | **연결 방식** | oracledb 직접 연결 (ORACLE_USER / ORACLE_PASSWORD / ORACLE_DSN) |
 | **스키마** | 기본 사용자 스키마 |
-| **테이블 수** | 1개 (`rag_audit_log`) |
+| **테이블 수** | 1개 (실제 운영 테이블은 `rag_audit_log_bak` — `infra/audit_logger.py`가 INSERT하는 대상. `rag_audit_log`는 동일 스키마의 미사용 템플릿) |
 | **로컬 스토리지** | FAISS 인덱스 폴더 (`db/msd_faiss.index/`) |
 
 > **참고**: FAISS 벡터 인덱스는 관계형 DB가 아닌 로컬 바이너리 파일로 관리하며, 본 문서의 논리/물리 모델은 Oracle 감사 로그 테이블을 대상으로 한다.
@@ -94,9 +97,8 @@
 | **FK Grade** | Flesch-Kincaid Grade Level (영어 원문 기준) | BINARY_DOUBLE | - |
 | **IR Hit Rate** | top-k 검색 결과 내 정답 문서(disease 라벨 기준) 적중 여부 (0/1). 일반 운영 시 NULL | BINARY_DOUBLE | - |
 | **IR MRR** | 정답 문서가 처음 등장한 순위의 역수 (1/rank), 미적중 시 0. 일반 운영 시 NULL | BINARY_DOUBLE | - |
-| TruLens Context Relevance | TruLens RAG Triad 기반 컨텍스트 관련도 (RAGAS CP 교차검증용) | BINARY_DOUBLE | - |
-| TruLens Groundedness | TruLens RAG Triad 기반 근거성 (RAGAS F 교차검증용) | BINARY_DOUBLE | - |
-| TruLens Answer Relevance | TruLens RAG Triad 기반 답변 관련성 (RAGAS AR 교차검증용) | BINARY_DOUBLE | - |
+| DeepEval Faithfulness | DeepEval 기반 근거성 (RAGAS F 교차검증용, 판정 LLM: gpt-4o-mini) | BINARY_DOUBLE | - |
+| DeepEval Answer Relevancy | DeepEval 기반 답변 관련성 (RAGAS AR 교차검증용, 판정 LLM: gpt-4o-mini) | BINARY_DOUBLE | - |
 
 ### 2.3 ERD (단일 테이블)
 
@@ -206,7 +208,7 @@ request_id = "cons-003", ablation_condition = "A", user_level="Consumer"
 ```sql
 -- ============================================================
 -- rag_audit_log 테이블 생성 스크립트 (Oracle)
--- 버전: v5.2
+-- 버전: v5.6
 -- ============================================================
 
 BEGIN EXECUTE IMMEDIATE 'DROP TABLE rag_audit_log'; EXCEPTION WHEN OTHERS THEN IF SQLCODE != -942 THEN RAISE; END IF; END;
@@ -263,12 +265,11 @@ CREATE TABLE rag_audit_log (
     -- 가독성 지표
     fk_grade                BINARY_DOUBLE,      -- Flesch-Kincaid Grade Level (영어 원문 기준)
 
-    -- 성능평가 전용 지표 (v5.2, critic 루프 게이트와 무관, disease 라벨 있는 STQS 행만 기록)
+    -- 성능평가 전용 지표 (v5.6 기준, critic 루프 게이트와 무관, disease 라벨 있는 STQS 행만 기록)
     ir_hit_rate              BINARY_DOUBLE,      -- 0 또는 1 (top-k 내 정답 문서 적중 여부)
     ir_mrr                   BINARY_DOUBLE,      -- 0~1 (1/rank, 정답 문서 첫 등장 순위 역수)
-    trulens_context_relevance BINARY_DOUBLE,     -- TruLens RAG Triad — RAGAS CP 교차검증
-    trulens_groundedness      BINARY_DOUBLE,     -- TruLens RAG Triad — RAGAS F 교차검증
-    trulens_answer_relevance  BINARY_DOUBLE,     -- TruLens RAG Triad — RAGAS AR 교차검증
+    deepeval_faithfulness         BINARY_DOUBLE, -- DeepEval — RAGAS F 교차검증
+    deepeval_answer_relevancy     BINARY_DOUBLE, -- DeepEval — RAGAS AR 교차검증
 
     CONSTRAINT pk_rag_audit_log PRIMARY KEY (log_id)
 );
@@ -285,20 +286,12 @@ END;
 /
 ```
 
-### 3.1.1 기존 테이블 마이그레이션 (v5.1 → v5.2, ALTER TABLE)
+### 3.1.1 기존 테이블 마이그레이션 이력 (v5.1 → v5.6, ALTER TABLE)
 
-이미 데이터가 쌓인 운영 테이블에는 위 `CREATE TABLE`(DROP 포함) 스크립트를 재실행하지 말고, 아래 `ALTER TABLE`로 컬럼만 추가한다. `rag_audit_log`/`rag_audit_log_bak` 양쪽 모두에 적용.
+이미 데이터가 쌓인 운영 테이블(`rag_audit_log_bak`)에는 위 `CREATE TABLE`(DROP 포함) 스크립트를 재실행하지 말고, 아래 `ALTER TABLE`로 컬럼만 변경한다. 전체 이력은 `db/create_table_bak.sql` 참고.
 
 ```sql
-ALTER TABLE rag_audit_log ADD (
-    ir_hit_rate               BINARY_DOUBLE,
-    ir_mrr                    BINARY_DOUBLE,
-    trulens_context_relevance BINARY_DOUBLE,
-    trulens_groundedness      BINARY_DOUBLE,
-    trulens_answer_relevance  BINARY_DOUBLE
-);
-/
-
+-- v5.1 → v5.2: 성능평가 전용 지표 5종 추가 (IR + TruLens, 이후 폐기됨)
 ALTER TABLE rag_audit_log_bak ADD (
     ir_hit_rate               BINARY_DOUBLE,
     ir_mrr                    BINARY_DOUBLE,
@@ -307,9 +300,29 @@ ALTER TABLE rag_audit_log_bak ADD (
     trulens_answer_relevance  BINARY_DOUBLE
 );
 /
+
+-- v5.2 → v5.3: 판정 프레임워크 TruLens → DeepEval 교체
+ALTER TABLE rag_audit_log_bak DROP (
+    trulens_context_relevance,
+    trulens_groundedness,
+    trulens_answer_relevance
+);
+/
+ALTER TABLE rag_audit_log_bak ADD (
+    deepeval_contextual_relevancy  BINARY_DOUBLE,
+    deepeval_faithfulness          BINARY_DOUBLE,
+    deepeval_answer_relevancy      BINARY_DOUBLE
+);
+/
+
+-- v5.5 → v5.6: Contextual Relevancy 사용 중단
+ALTER TABLE rag_audit_log_bak DROP (
+    deepeval_contextual_relevancy
+);
+/
 ```
 
-기존 행은 전부 NULL로 채워지며(신규 컬럼 NULL 허용), 재계산 없이도 이후 INSERT부터 값이 채워진다.
+기존 행은 컬럼 추가 시 전부 NULL로 채워지며(신규 컬럼 NULL 허용), 재계산 없이도 이후 INSERT부터 값이 채워진다. 컬럼 삭제(DROP) 시 해당 컬럼의 과거 데이터는 복구 불가능하게 사라진다.
 
 ### 3.2 컬럼 상세 명세
 
@@ -337,15 +350,14 @@ ALTER TABLE rag_audit_log_bak ADD (
 | `ragas_cp` | BINARY_DOUBLE | NULL | — | RAGAS Context Precision (0~1). 판정 LLM: Claude. Tier 1 행은 NULL |
 | `q_total` | BINARY_DOUBLE | NULL | — | 종합 품질 점수: 0.4·F + 0.4·AR + 0.2·CP. Tier 1 행은 NULL |
 | `retrieved_doc_count` | NUMBER(10) | NULL | — | 검색된 컨텍스트 청크 수 |
-| `llm_model` | VARCHAR2(50) | NULL | — | 답변 생성에 사용된 LLM 백엔드 ('openai'/'gemini'). RAGAS 판정(Claude)·TruLens 판정(Gemini)과는 별개 |
+| `llm_model` | VARCHAR2(50) | NULL | — | 답변 생성에 사용된 LLM 백엔드 ('openai'/'gemini'). RAGAS 판정(Claude)·DeepEval 판정(gpt-4o-mini)과는 별개 |
 | `execution_time_ms` | NUMBER(10) | NULL | — | 전체 워크플로우 소요 시간 (ms). is_final=0 행은 NULL |
 | `final_answer` | **CLOB** | NULL | — | 출처·면책 조항이 포함된 최종 영어 답변. is_final=0 행은 NULL |
 | `fk_grade` | BINARY_DOUBLE | NULL | — | Flesch-Kincaid Grade Level. is_final=1이고 is_fallback=0인 행만 기록. Consumer 목표 ≤9, Professional 목표 ≥12 |
 | `ir_hit_rate` | BINARY_DOUBLE | NULL | — | 전통적 IR 지표. top-k 검색 결과 중 `disease` 라벨과 매칭되는 출처 문서가 하나라도 있으면 1, 없으면 0. `disease`가 NULL인 일반 운영 행은 ground truth가 없으므로 NULL. LLM 불필요(문자열 매칭). **critic 루프 게이트에는 미사용, 성능평가 전용** |
 | `ir_mrr` | BINARY_DOUBLE | NULL | — | Mean Reciprocal Rank. `disease` 라벨과 매칭되는 첫 출처 문서의 순위 역수(1/rank), 미적중 시 0. `disease`가 NULL인 행은 NULL. **성능평가 전용** |
-| `trulens_context_relevance` | BINARY_DOUBLE | NULL | — | TruLens RAG Triad. 판정 LLM: **Gemini**(`GEMINI_AUX_MODEL`, LiteLLM 경유). RAGAS `ragas_cp`와 별도 프레임워크·별도 모델로 교차검증. **성능평가 전용, 게이트 미사용** |
-| `trulens_groundedness` | BINARY_DOUBLE | NULL | — | TruLens RAG Triad. 판정 LLM: Gemini. RAGAS `ragas_f`와 별도 프레임워크·별도 모델로 교차검증. **성능평가 전용, 게이트 미사용** |
-| `trulens_answer_relevance` | BINARY_DOUBLE | NULL | — | TruLens RAG Triad. 판정 LLM: Gemini. RAGAS `ragas_ar`와 별도 프레임워크·별도 모델로 교차검증. **성능평가 전용, 게이트 미사용** |
+| `deepeval_faithfulness` | BINARY_DOUBLE | NULL | — | DeepEval. 판정 LLM: **gpt-4o-mini**(`DEEPEVAL_LLM_MODEL`, OpenAI 직접 호출). RAGAS `ragas_f`와 별도 프레임워크로 교차검증. **성능평가 전용, 게이트 미사용** |
+| `deepeval_answer_relevancy` | BINARY_DOUBLE | NULL | — | DeepEval. 판정 LLM: gpt-4o-mini. RAGAS `ragas_ar`와 별도 프레임워크로 교차검증. **성능평가 전용, 게이트 미사용** |
 
 ### 3.3 인덱스 (Indexes)
 

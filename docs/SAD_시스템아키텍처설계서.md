@@ -18,6 +18,8 @@
 | v1.0 | 초기 아키텍처 설계 |
 | v2.0 | Proposal System vs Baseline 2조건, STQS-40, 요청당 1행 감사 로그, FK Grade 기초 설계 |
 | v3.0 | 감사 로그 N+1행 설계(save_loop_log 추가), fk_grade 컬럼 도입, Consumer/Professional 가독성 프롬프트, 성능 시각화 7개 섹션 확장 |
+| v3.1 (2026-08-30) | 성능평가 전용 교차검증 프레임워크를 TruLens RAG Triad(3종, Gemini 판정) → DeepEval(2종: Faithfulness/Answer Relevancy, gpt-4o-mini 판정)으로 교체. Contextual Relevancy는 이후(v3.2) 제거 |
+| v3.2 (2026-09-21) | 성능 시각화 8개 섹션으로 확장(DeepEval 비교, IR Hit Rate/MRR 섹션 추가) 및 번호 재정렬 |
 
 ---
 
@@ -122,7 +124,7 @@
 | 점수 카드 | `ui/score_card.py` | F/AR/CP 점수 카드 렌더링 |
 | 결과 패널 | `ui/result_panel.py` | 최종 답변 표시 |
 | 로그 뷰어 | `ui/dashboard/log_viewer.py` | 감사 로그 목록/상세 조회 |
-| 성능 시각화 | `ui/dashboard/performance_viz.py` | Proposal System vs Baseline 7개 섹션 시각화 차트 |
+| 성능 시각화 | `ui/dashboard/performance_viz.py` | Proposal System vs Baseline 8개 섹션 시각화 차트 |
 
 **Streamlit 세션 상태 관리:**
 
@@ -164,9 +166,8 @@ class GraphState(TypedDict):
     # ── 성능평가 전용 지표 (게이트 무관, disease 있는 STQS/ablation 행만 값 존재) ──
     hit_rate_score:            float        # IR Hit Rate (0/1), 일반 운영 시 None
     mrr_score:                 float        # IR MRR (0~1), 일반 운영 시 None
-    trulens_context_relevance: float        # TruLens RAG Triad — RAGAS CP 교차검증 (Gemini 판정)
-    trulens_groundedness:      float        # TruLens RAG Triad — RAGAS F 교차검증 (Gemini 판정)
-    trulens_answer_relevance:  float        # TruLens RAG Triad — RAGAS AR 교차검증 (Gemini 판정)
+    deepeval_faithfulness:      float        # DeepEval — RAGAS F 교차검증 (gpt-4o-mini 판정)
+    deepeval_answer_relevancy:  float        # DeepEval — RAGAS AR 교차검증 (gpt-4o-mini 판정)
     # ── 티어 및 루프 ───────────────────────────────────────────────────
     search_tier:              int          # 현재 검색 티어 (0/1/2)
     loop_count:               int          # 현재 Tier 재시도 횟수
@@ -306,7 +307,7 @@ save_loop_log(state, request_id, eval_count)
     │
     ├─ q_total = 0.4·F + 0.4·AR + 0.2·CP (Tier 1은 NULL)
     ├─ is_final=FALSE, fk_grade=NULL
-    └─ INSERT INTO rag_audit_log (중간 행)
+    └─ INSERT INTO rag_audit_log_bak (중간 행)
 
 output_node 완료
     │
@@ -318,7 +319,7 @@ save_audit_log(state, request_id, fk_grade=fk)
     │
     ├─ is_final=TRUE, final_answer 포함
     ├─ fk_grade = 영어 원문 FK Grade Level
-    └─ INSERT INTO rag_audit_log (최종 행)
+    └─ INSERT INTO rag_audit_log_bak (최종 행)
 ```
 
 **fk_grade NULL 조건:**
@@ -358,14 +359,14 @@ OfficialRagasScores(faithfulness, answer_relevance, context_precision, hallu_fla
 
 > **호환성 이슈**: 설치된 `ragas`(0.4.3)의 Anthropic 어댑터는 OpenAI/Google과 달리 `temperature`/`top_p`를 무조건 pass-through한다. Claude 5세대 모델은 두 값을 동시에 받으면 400 에러를 내므로, `llm_factory()` 반환 객체의 `llm.model_args`에서 `temperature`·`top_p` 키를 제거하고 모델 기본 샘플링에 맡긴다.
 
-**성능평가 전용 지표 (`compute_ir_metrics`, `compute_trulens_triad`)**
+**성능평가 전용 지표 (`compute_ir_metrics`, `compute_deepeval_scores`)**
 
 `disease`(STQS-240/ablation 정답 라벨)가 있는 요청에서만 critic_agent가 호출하며, Self-Correction Loop 게이트에는 관여하지 않고 DB 기록·성능 시각화 전용으로만 쓰인다.
 
 | 함수 | 방식 | 판정 LLM |
 |------|------|----------|
 | `compute_ir_metrics(disease, context_sources)` | `context_sources` 파일명에 `disease`명 포함 여부로 Hit Rate(0/1)·MRR(1/rank) 계산 | 없음 (순수 문자열 매칭) |
-| `compute_trulens_triad(question, answer, context_chunks)` | TruLens RAG Triad(Context Relevance/Groundedness/Answer Relevance)를 RAGAS와 별개 프레임워크로 채점, `ThreadPoolExecutor(max_workers=3)`로 3개 지표 동시 호출(timeout=90초) | **Gemini**(`GEMINI_AUX_MODEL`, `trulens.providers.litellm.LiteLLM(model_engine="gemini/...")`경유) |
+| `compute_deepeval_scores(question, answer, context_chunks)` | DeepEval(Faithfulness/Answer Relevancy)을 RAGAS와 별개 프레임워크로 채점, `ThreadPoolExecutor(max_workers=2)`로 2개 지표 동시 호출(timeout=90초). Contextual Relevancy는 더 이상 사용하지 않음 | **gpt-4o-mini**(`DEEPEVAL_LLM_MODEL`, `deepeval.models.OpenAIModel` 경유) |
 
 실패 시 두 함수 모두 `0.0`이 아닌 `None`을 반환해 DB에 `NULL`로 남긴다 (측정 실패를 낮은 점수로 오인하지 않도록).
 
@@ -400,7 +401,7 @@ ContextVar[llm_provider]  ← "openai"
 | 쿼리 최적화 | gpt-4o-mini | 〃 |
 | RAG 엔진 (답변 생성) | gpt-4o-mini (코드 기본값은 gpt-4o) | 〃 |
 | RAGAS 평가 (F/AR/CP) | **claude-haiku-4-5-20251001** (`ANTHROPIC_MODEL`) | `ContextVar[llm_provider]`와 무관, 항상 Claude 고정 |
-| TruLens RAG Triad (성능평가 전용) | **gemini-2.5-flash** (`GEMINI_AUX_MODEL`) | `disease` 있는 STQS/ablation 요청에서만 호출 |
+| DeepEval (성능평가 전용) | **gpt-4o-mini** (`DEEPEVAL_LLM_MODEL`) | `disease` 있는 STQS/ablation 요청에서만 호출. Faithfulness/Answer Relevancy 2종 |
 
 ---
 
@@ -522,9 +523,9 @@ app.py  (ablation_condition="A" 고정)
        │    │    └─ infra/vector_store.py
        │    └─ tools/web_search.py
        └─ agents/critic.py
-       │    └─ infra/evaluator.py        ← RAGAS + flesch_kincaid_grade_en + IR/TruLens(성능평가 전용)
+       │    └─ infra/evaluator.py        ← RAGAS + flesch_kincaid_grade_en + IR/DeepEval(성능평가 전용)
        │         ├─ core/llm_client.py (RAGAS 판정 — Claude, AsyncAnthropic)
-       │         └─ trulens.providers.litellm (TruLens 판정 — Gemini, LiteLLM 경유)
+       │         └─ deepeval.models.OpenAIModel (DeepEval 판정 — gpt-4o-mini, OpenAI 직접 호출)
        └─ agents/output.py
        │    └─ core/llm_client.py
        └─ infra/audit_logger.py         ← save_loop_log + save_audit_log (N+1행 INSERT)
@@ -537,7 +538,7 @@ main.ipynb  (ablation_condition="A"/"E", STQS-240 × 2조건 = 480실험)
 ui/dashboard/performance_viz.py
   └─ oracledb → Oracle Database (직접 쿼리)
   └─ matplotlib, seaborn (영어 텍스트만 사용 — 폰트 렌더링 안정성)
-  └─ 7개 섹션 시각화 (RAGAS 비교 / 환각 / Tier 분포+표 / 분류기 / FK Grade / 루프 수렴 / 처리 시간)
+  └─ 8개 섹션 시각화 (RAGAS 비교 / Tier 분포+표 / 루프 수렴 / FK Grade / 처리 시간 / 분류기 / DeepEval 비교 / IR Hit Rate·MRR)
 
 medical_rag_graph.py  (하위 호환 re-export 모듈 — 직접 사용 지양)
 ```
@@ -588,7 +589,7 @@ rag_nonmun/
 │
 ├── infra/
 │   ├── vector_store.py       # FAISS 인덱스 빌드 및 관리 (BAAI/bge-base-en-v1.5)
-│   ├── evaluator.py          # RAGAS(Claude 판정) + flesch_kincaid_grade_en() + IR/TruLens(Gemini 판정, 성능평가 전용)
+│   ├── evaluator.py          # RAGAS(Claude 판정) + flesch_kincaid_grade_en() + IR/DeepEval(gpt-4o-mini 판정, 성능평가 전용)
 │   └── audit_logger.py       # Oracle DB 감사 로그 저장 (N+1행: save_loop_log + save_audit_log)
 │
 ├── tools/
@@ -614,7 +615,7 @@ rag_nonmun/
 │       ├── log_list.py       # 로그 목록 컴포넌트
 │       ├── log_detail.py     # 로그 상세 컴포넌트
 │       ├── log_query.py      # 로그 DB 쿼리
-│       └── performance_viz.py # 성능 시각화 대시보드 (7개 섹션)
+│       └── performance_viz.py # 성능 시각화 대시보드 (8개 섹션)
 │
 ├── utils/
 │   └── json_parser.py        # LLM JSON 응답 파싱 유틸리티
@@ -703,6 +704,12 @@ def _get_graph():
 **결정**: `disease`(STQS-240/ablation 정답 라벨)가 있는 요청에서만 critic_agent가 IR Hit Rate/MRR과 TruLens RAG Triad(Gemini 판정)를 추가로 계산해 DB에 기록. Self-Correction Loop 게이트(`check_faithfulness`/`is_critically_low`)에는 관여하지 않음  
 **이유**: (1) RAGAS만으로 최종 성능평가를 하면 8.11과 동일한 순환성 문제가 남음 — TruLens라는 별도 프레임워크·별도 판정 모델(Gemini)로 F/AR/CP를 교차검증. (2) 전통적 IR 지표(Hit Rate/MRR)로 검색 성능 자체를 LLM 판정 없이 독립적으로 검증. (3) `disease`가 없는 일반 운영 쿼리는 ground truth가 없거나(IR) 교차검증 목적이 없어(TruLens) 계산을 생략해 불필요한 LLM 호출 비용을 막음.
 
+### 8.13 판정 프레임워크 교체 — TruLens → DeepEval, Contextual Relevancy 제거 (2026-08-30 / 2026-09-21)
+
+**결정 1 (2026-08-30)**: 8.12에서 도입한 TruLens RAG Triad(Context Relevance/Groundedness/Answer Relevance 3종, Gemini 판정)를 DeepEval(Faithfulness/Answer Relevancy/Contextual Relevancy 3종, 처음엔 Gemini 판정 유지)로 교체. `litellm`/`trulens-core`/`trulens-providers-litellm` 의존성 제거, `deepeval` 패키지 도입. 이후 판정 LLM도 비용·단순화 목적으로 Gemini → **OpenAI gpt-4o-mini**(`DEEPEVAL_LLM_MODEL`)로 통일 — 이 시점부터 판정 LLM 간 독립성(circularity 회피 목적)은 더 이상 완전히 보장되지 않는다.  
+**결정 2 (2026-09-21)**: DeepEval 3종 중 `Contextual Relevancy`를 사용 중단 — Faithfulness/Answer Relevancy 2종만 유지. 대시보드 Table 7(DeepEval Metric Comparison), Oracle 컬럼 `deepeval_contextual_relevancy`도 함께 제거.  
+**영향**: `GraphState`·`rag_audit_log_bak` 스키마·`ui/dashboard/performance_viz.py` 모두 2개 지표(`deepeval_faithfulness`, `deepeval_answer_relevancy`) 기준으로 갱신됨 (§3.2.1, §3.3, DB_데이터베이스설계서.md v5.3~v5.6 참고).
+
 ---
 
 ## 9. 보안 및 운영 설계
@@ -719,7 +726,7 @@ def _get_graph():
 | LLM API 오류 | `max_retries=6` 자동 재시도 |
 | RAGAS 평가 실패 | 각 메트릭별 개별 try/except, 실패 시 0.0 반환 (게이트 판단에 쓰이므로 안전한 기본값) |
 | RAGAS 타임아웃 | `future.result(timeout=120)` 초과 시 0.0 반환 |
-| TruLens 평가 실패/타임아웃 | 지표별 개별 try/except, `future.result(timeout=90)`. 게이트에 쓰이지 않으므로 0.0이 아닌 `None` 반환 → DB NULL |
+| DeepEval 평가 실패/타임아웃 | 지표별 개별 try/except, `future.result(timeout=90)`. 게이트에 쓰이지 않으므로 0.0이 아닌 `None` 반환 → DB NULL |
 | DB 커넥션 오류 | 커넥션 초기화 후 로그만 기록, 시스템 계속 실행 |
 | 모든 Tier 소진 | Fallback 노드로 라우팅, 원문 제시 |
 

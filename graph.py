@@ -1,6 +1,18 @@
 import time
 import uuid
+import warnings
 from typing import Callable, Literal, Optional
+
+import langchain  # noqa: F401 — 아래 필터보다 먼저 import 되어야 함 (이유는 주석 참고)
+import langchain_core  # noqa: F401
+
+# langgraph의 체크포인트 직렬화기가 allowed_objects를 명시하지 않고 langchain_core
+# Reviver를 생성하면서 나오는 라이브러리 내부 경고. langchain_core와 langchain 패키지는
+# 각자 __init__ 시점에 surface_langchain_deprecation_warnings()를 호출해 이 카테고리를
+# "default"로 (재)활성화하므로, 둘 다 먼저 import해서 그 등록을 끝낸 뒤에 필터를 걸어야
+# 우리 필터가 우선순위 맨 앞에 남아 실제로 숨겨진다. langgraph가 자체적으로 값을 명시하기
+# 전까지는 우리 쪽에서 근본적으로 고칠 수 없어 경고만 숨긴다.
+warnings.filterwarnings("ignore", message=r".*allowed_objects.*")
 
 from langgraph.graph import StateGraph, END
 from langgraph.types import Command
@@ -292,11 +304,10 @@ def run_medical_self_corrective_rag(
         "context_precision_score": 0.0,
         "critic_feedback":        "",
         # ── 성능평가 전용 지표 (disease 있는 STQS/ablation 행만 critic_agent에서 값 채움) ──
-        "hit_rate_score":              None,
-        "mrr_score":                   None,
-        "trulens_context_relevance":   None,
-        "trulens_groundedness":        None,
-        "trulens_answer_relevance":    None,
+        "hit_rate_score":                None,
+        "mrr_score":                     None,
+        "deepeval_faithfulness":         None,
+        "deepeval_answer_relevancy":     None,
         # ── 티어 / 루프 ───────────────────────────────────────────────────────
         "search_tier":            0,
         "loop_count":             0,

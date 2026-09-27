@@ -125,6 +125,25 @@ EMBEDDING_MODEL = _env(
 LOG_LEVEL = _env("MEDICAL_RAG_LOG_LEVEL", "INFO").upper()
 
 
+def _resolve_embedding_device() -> str:
+    """임베딩 모델 실행 디바이스를 결정한다.
+
+    MEDICAL_RAG_EMBEDDING_DEVICE=cuda|cpu|mps 로 강제 지정할 수 있으며,
+    설정하지 않거나 "auto"인 경우 torch.cuda.is_available()로 자동 감지한다.
+    """
+    forced = _env("MEDICAL_RAG_EMBEDDING_DEVICE", "auto").lower()
+    if forced in ("cuda", "cpu", "mps"):
+        return forced
+    try:
+        import torch
+        return "cuda" if torch.cuda.is_available() else "cpu"
+    except ImportError:
+        return "cpu"
+
+
+EMBEDDING_DEVICE = _resolve_embedding_device()
+
+
 def _env_int(key: str, default: int) -> int:
     try:
         return int(_env(key, str(default)))
@@ -147,8 +166,13 @@ GEMINI_AUX_MODEL = _gemini_aux if _gemini_aux else "gemini-2.5-flash"
 OPENAI_MODEL = _env("OPENAI_MODEL", "gpt-4o")
 TRANSLATE_MODEL = _env("MEDICAL_RAG_TRANSLATE_MODEL", "gpt-4o-mini")
 RAGAS_LLM_MODEL = _env("MEDICAL_RAG_RAGAS_LLM_MODEL", "gpt-4o-mini")
-# RAGAS 평가(F/AR/CP) 전용 판정 LLM. 답변 생성 LLM(OpenAI/Gemini)과 분리해
-# 같은 모델이 채점까지 겸하는 순환성(circularity) 문제를 피한다.
+# RAGAS 평가(F/AR/CP) 전용 판정 LLM.
+DEEPEVAL_LLM_MODEL = _env("MEDICAL_RAG_DEEPEVAL_LLM_MODEL", "gpt-4o-mini")
+# DeepEval 교차검증 전용 판정 LLM.
+# 주의: RAGAS_LLM_MODEL과 DEEPEVAL_LLM_MODEL이 같고, 답변 생성 LLM도 OpenAI 계열이면
+# "같은 모델 계열이 답변 생성·1차 채점·교차검증을 모두 겸하는" 순환성 문제가 생길 수
+# 있다. 원래는 각각 Claude(RAGAS)·Gemini(DeepEval)로 분리해 이를 피했으나,
+# 비용/단순화를 위해 의도적으로 gpt-4o-mini로 통일함.
 ANTHROPIC_MODEL = _env("ANTHROPIC_MODEL", "claude-sonnet-5")
 CLASSIFIER_LLM_MODEL = _env("MEDICAL_RAG_CLASSIFIER_MODEL", "gpt-4o")
 

@@ -17,8 +17,12 @@ logger = logging.getLogger(__name__)
 
 def _get_embeddings() -> "HuggingFaceEmbeddings":
     from langchain_huggingface import HuggingFaceEmbeddings
-    logger.info("[Embedding] 모델 로드: %s", settings.EMBEDDING_MODEL)
-    embeddings = HuggingFaceEmbeddings(model_name=settings.EMBEDDING_MODEL)
+    device = settings.EMBEDDING_DEVICE
+    logger.info("[Embedding] 모델 로드: %s (device=%s)", settings.EMBEDDING_MODEL, device)
+    embeddings = HuggingFaceEmbeddings(
+        model_name=settings.EMBEDDING_MODEL,
+        model_kwargs={"device": device},
+    )
     logger.info("[Embedding] 모델 로드 완료")
     return embeddings
 

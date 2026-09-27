@@ -1,7 +1,7 @@
 -- ============================================================
 -- rag_audit_log_bak 테이블 생성 스크립트 (Oracle)
--- rag_audit_log 백업용 — 구조 동일, 테이블명만 상이
--- 버전: v5.2  (ir_hit_rate/ir_mrr, trulens_* 3종 컬럼 추가)
+-- 실제 운영 중인 테이블 (infra/audit_logger.py가 INSERT하는 대상).
+-- 버전: v5.6  (deepeval_contextual_relevancy 컬럼 제거, deepeval_* 2종만 유지)
 -- ============================================================
 
 -- 기존 객체 안전 삭제
@@ -62,11 +62,10 @@ CREATE TABLE rag_audit_log_bak (
     fk_grade                BINARY_DOUBLE,      -- Flesch-Kincaid Grade Level (영어 원문 기준)
 
     -- 성능평가 전용 지표 (critic 루프 게이트와 무관, disease 라벨 있는 STQS 행만 기록)
-    ir_hit_rate              BINARY_DOUBLE,      -- 0 또는 1 (top-k 내 정답 문서 적중 여부)
-    ir_mrr                   BINARY_DOUBLE,      -- 0~1 (1/rank, 정답 문서 첫 등장 순위 역수)
-    trulens_context_relevance BINARY_DOUBLE,     -- TruLens RAG Triad — RAGAS CP 교차검증
-    trulens_groundedness      BINARY_DOUBLE,     -- TruLens RAG Triad — RAGAS F 교차검증
-    trulens_answer_relevance  BINARY_DOUBLE,     -- TruLens RAG Triad — RAGAS AR 교차검증
+    ir_hit_rate                    BINARY_DOUBLE,  -- 0 또는 1 (top-k 내 정답 문서 적중 여부)
+    ir_mrr                         BINARY_DOUBLE,  -- 0~1 (1/rank, 정답 문서 첫 등장 순위 역수)
+    deepeval_faithfulness          BINARY_DOUBLE,  -- DeepEval — RAGAS F 교차검증
+    deepeval_answer_relevancy      BINARY_DOUBLE,  -- DeepEval — RAGAS AR 교차검증
 
     CONSTRAINT pk_rag_audit_log_bak PRIMARY KEY (log_id)
 );
@@ -90,3 +89,37 @@ CREATE INDEX idx_bak_disease     ON rag_audit_log_bak (disease);
 CREATE INDEX idx_bak_query_index ON rag_audit_log_bak (query_index);
 CREATE INDEX idx_bak_final       ON rag_audit_log_bak (request_id, is_final);
 /
+
+-- ============================================================
+-- 참고: 라이브 rag_audit_log_bak는 이미 trulens_* 3종 → deepeval_* 3종으로
+-- 교체된 상태(2026-08-30, DB 직접 조회로 확인)지만 이 파일에는 그 ALTER가
+-- 기록된 적이 없었음 — 위 CREATE TABLE 정의를 라이브 스키마와 일치하도록
+-- 갱신(v5.4)하며 함께 정리함.
+-- ============================================================
+
+-- ============================================================
+-- 롤백 (v5.4/v5.5 → v5.3 복귀, 2026-09-03)
+-- 세션 중 deepeval_contextual_precision/recall로 실험했다가 CR 사용 시점으로
+-- 되돌림. precision/recall 컬럼은 삭제, contextual_relevancy 컬럼 재생성.
+-- 단, contextual_relevancy의 과거 데이터는 이미 삭제되어 복구 불가 — 빈 컬럼만 복원.
+-- ============================================================
+-- ALTER TABLE rag_audit_log_bak DROP (
+--     deepeval_contextual_precision,
+--     deepeval_contextual_recall
+-- );
+-- /
+-- ALTER TABLE rag_audit_log_bak ADD (
+--     deepeval_contextual_relevancy  BINARY_DOUBLE
+-- );
+-- /
+
+-- ============================================================
+-- v5.6 (2026-09-21): deepeval_contextual_relevancy 제거
+-- 더 이상 사용하지 않기로 결정 — DeepEval은 faithfulness/answer_relevancy
+-- 2종만 유지. 컬럼 값은 전부 NULL이었으므로(v5.4/v5.5 시점에 추가된 컬럼이라
+-- 기록된 실제 데이터 없음) 데이터 손실 없이 삭제 가능.
+-- ============================================================
+-- ALTER TABLE rag_audit_log_bak DROP (
+--     deepeval_contextual_relevancy
+-- );
+-- /

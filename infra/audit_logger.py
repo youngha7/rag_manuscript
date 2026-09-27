@@ -42,7 +42,7 @@ _INSERT_SQL = """
         retrieved_doc_count, llm_model, execution_time_ms,
         final_answer, fk_grade,
         ir_hit_rate, ir_mrr,
-        trulens_context_relevance, trulens_groundedness, trulens_answer_relevance
+        deepeval_faithfulness, deepeval_answer_relevancy
     ) VALUES (
         :request_id, :loop_number, :is_final,
         :ablation_condition, :query_index, :disease,
@@ -54,7 +54,7 @@ _INSERT_SQL = """
         :retrieved_doc_count, :llm_model, :execution_time_ms,
         :final_answer, :fk_grade,
         :ir_hit_rate, :ir_mrr,
-        :trulens_context_relevance, :trulens_groundedness, :trulens_answer_relevance
+        :deepeval_faithfulness, :deepeval_answer_relevancy
     )
 """
 
@@ -155,11 +155,10 @@ def _build_row(
         "execution_time_ms":     execution_time_ms,
         "final_answer":          final_answer,
         "fk_grade":              fk_grade,
-        "ir_hit_rate":               state.get("hit_rate_score"),
-        "ir_mrr":                    state.get("mrr_score"),
-        "trulens_context_relevance": state.get("trulens_context_relevance"),
-        "trulens_groundedness":      state.get("trulens_groundedness"),
-        "trulens_answer_relevance":  state.get("trulens_answer_relevance"),
+        "ir_hit_rate":                    state.get("hit_rate_score"),
+        "ir_mrr":                         state.get("mrr_score"),
+        "deepeval_faithfulness":          state.get("deepeval_faithfulness"),
+        "deepeval_answer_relevancy":      state.get("deepeval_answer_relevancy"),
     }
 
 

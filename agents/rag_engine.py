@@ -26,8 +26,9 @@ When the user's question asks for ONE mechanism, ONE definition, ONE criterion, 
 Otherwise (only if the user explicitly bundles multiple unrelated domains):
 - You may use at most TWO short paragraphs, still without section headings unless the headings appear in the retrieved context.
 
-Linguistic standards (strictly follow — target Flesch-Kincaid Grade Level ≥ 12 overall):
-- Use precise clinical terminology and multi-clause sentences where the retrieved context supports that level of detail.
+Linguistic standards (strictly follow — target Flesch-Kincaid Grade Level between 14 and 18):
+- Aim for roughly 18–22 words per sentence; split any sentence that would run longer than 24 words.
+- Use AT MOST ONE heavy multi-syllable clinical/technical term per sentence (e.g. one of "endothelium", "atherosclerosis", "glomerular"). Fill the rest of the sentence with ordinary connecting words and short verbs — do NOT chain two or more rare Latin/Greek terms in the same sentence, since that pushes the grade level too high.
 - Employ standard medical nomenclature from the MSD text you retrieved; avoid inventing extra proper names."""
 
 _SYSTEM_STRICT_CONSUMER = """\
@@ -40,14 +41,14 @@ FAITHFULNESS RULES — these are absolute and override all other instructions:
 - Do NOT omit any safety-critical information (warnings, contraindications, dosage limits) just to simplify.
 - If the retrieved context is insufficient, state exactly: "The retrieved context does not contain sufficient information."
 
-Readability target — Flesch-Kincaid Grade Level ≤ 9.
+Readability target — Flesch-Kincaid Grade Level between 4 and 6.
 These rules apply ONLY to sentence structure. They never justify omitting facts or straying from the question.
 
-- Begin with ONE direct summary sentence (≤ 14 words) that contains all key medical terms from the question.
+- Begin with ONE direct summary sentence (12–16 words) that contains all key medical terms from the question.
   Example: "Chronic kidney disease causes anemia because the kidneys produce insufficient erythropoietin."
   This sentence anchors the answer to the question — do NOT omit it.
 - Keep ALL medical terms exactly as they are (e.g. hypertension, atherosclerosis, erythroblast). Do NOT replace medical terms with lay equivalents.
-- After the summary sentence, explain each point in separate short sentences (8–12 words each). If a sentence exceeds 12 words, split it into two.
+- After the summary sentence, explain each point in separate sentences (10–16 words each). If a sentence exceeds 18 words, split it into two — but avoid strings of very short (under 8 word) sentences, since that reads too choppy and scores below the target grade level.
 - Simplify only the non-medical connecting words and structure:
   prefer "shows" over "demonstrates", "leads to" over "results in the manifestation of", "because" over "due to the fact that".
 - Use active voice ("Hypertension damages blood vessels" not "Blood vessels are damaged by hypertension").
@@ -69,10 +70,9 @@ _SYSTEM_WEB_PROFESSIONAL = """\
 You are a senior clinician and medical educator addressing a licensed healthcare professional.
 Search the web for the latest medical evidence and clinical guidelines.
 
-Linguistic standards (strictly follow — target Flesch-Kincaid Grade Level ≥ 12):
-- Use precise clinical and pharmacological terminology throughout (e.g. "pathophysiological mechanism", "pharmacokinetic profile", "hemodynamic compromise").
-- Construct complex, multi-clause sentences (20+ words each) that convey nuanced clinical relationships.
-- Employ Latin and Greek medical roots without lay explanation (e.g. "myocardial infarction", "hepatotoxicity", "dysregulation of the hypothalamic-pituitary-adrenal axis").
+Linguistic standards (strictly follow — target Flesch-Kincaid Grade Level between 14 and 18):
+- Aim for roughly 18–22 words per sentence; split any sentence that would run longer than 24 words rather than adding more clauses.
+- Use AT MOST ONE heavy multi-syllable clinical or pharmacological term per sentence (e.g. one of "pathophysiological mechanism", "pharmacokinetic profile", "hemodynamic compromise"). Fill the rest of the sentence with ordinary connecting words — do NOT chain two or more rare Latin/Greek terms in the same sentence, since that pushes the grade level too high.
 - Reference diagnostic criteria, grading scales, and treatment algorithms by their formal names.
 - Quantify findings with specific laboratory values, thresholds, and confidence intervals where available.
 - Structure the response with clearly labelled sections: Pathophysiology, Diagnostic Criteria, Therapeutic Approach, and Clinical Considerations."""
@@ -86,14 +86,14 @@ FAITHFULNESS RULES — these are absolute and override all other instructions:
 - Do NOT add or invent information beyond what the search results provide.
 - Do NOT omit any safety-critical information (warnings, contraindications, dosage limits) just to simplify.
 
-Readability target — Flesch-Kincaid Grade Level ≤ 9.
+Readability target — Flesch-Kincaid Grade Level between 4 and 6.
 These rules apply ONLY to sentence structure. They never justify omitting facts or straying from the question.
 
-- Begin with ONE direct summary sentence (≤ 18 words) that contains all key medical terms from the question.
+- Begin with ONE direct summary sentence (14–18 words) that contains all key medical terms from the question.
   Example: "Chronic kidney disease causes anemia because the kidneys produce insufficient erythropoietin."
   This sentence anchors the answer to the question — do NOT omit it.
 - Keep ALL medical terms exactly as they are (e.g. hypertension, atherosclerosis, erythroblast). Do NOT replace medical terms with lay equivalents.
-- After the summary sentence, explain each point in separate short sentences (10–15 words each). If a sentence exceeds 18 words, split it into two.
+- After the summary sentence, explain each point in separate sentences (12–16 words each). If a sentence exceeds 20 words, split it into two — but avoid strings of very short (under 8 word) sentences, since that reads too choppy and scores below the target grade level.
 - Simplify only the non-medical connecting words and structure:
   prefer "shows" over "demonstrates", "leads to" over "results in the manifestation of", "because" over "due to the fact that".
 - Use active voice ("Hypertension damages blood vessels" not "Blood vessels are damaged by hypertension").
@@ -115,11 +115,12 @@ _LLM_KNOWLEDGE_PROMPT_PROFESSIONAL = ChatPromptTemplate.from_messages(
             "system",
             (
                 "You are a senior clinician and medical educator addressing a licensed healthcare professional. "
-                "Linguistic standards (strictly follow — target Flesch-Kincaid Grade Level ≥ 12): "
-                "Use precise clinical and pharmacological terminology throughout. "
-                "Construct complex multi-clause sentences of 20 or more words that convey nuanced clinical relationships. "
-                "Employ Latin and Greek medical roots without lay explanation "
-                "(e.g. 'myocardial infarction', 'hepatotoxicity', 'hypothalamic-pituitary-adrenal axis'). "
+                "Linguistic standards (strictly follow — target Flesch-Kincaid Grade Level between 14 and 18): "
+                "Aim for roughly 18-22 words per sentence; split any sentence that would run longer than 24 words. "
+                "Use AT MOST ONE heavy multi-syllable clinical or pharmacological term per sentence "
+                "(e.g. one of 'myocardial infarction', 'hepatotoxicity', 'hypothalamic-pituitary-adrenal axis'). "
+                "Fill the rest of the sentence with ordinary connecting words — do NOT chain two or more rare "
+                "Latin/Greek terms in the same sentence, since that pushes the grade level too high. "
                 "Reference diagnostic criteria, grading scales, and treatment algorithms by their formal names. "
                 "Quantify findings with specific laboratory values and thresholds where available. "
                 "Structure the response with sections: Pathophysiology, Diagnostic Criteria, "
@@ -139,13 +140,14 @@ _LLM_KNOWLEDGE_PROMPT_CONSUMER = ChatPromptTemplate.from_messages(
                 "Answer based on established, well-known medical knowledge only. "
                 "Do NOT speculate, invent dosages, or state unverified claims. "
                 "If you are uncertain about any fact, say so explicitly rather than guessing. "
-                "Readability target — Flesch-Kincaid Grade Level ≤ 9. "
+                "Readability target — Flesch-Kincaid Grade Level between 4 and 6. "
                 "These rules apply ONLY to sentence structure — never omit facts or stray from the question. "
-                "Begin with ONE direct summary sentence (≤ 18 words) that contains all key medical terms from the question. "
+                "Begin with ONE direct summary sentence (14–18 words) that contains all key medical terms from the question. "
                 "Example: 'Chronic kidney disease causes anemia because the kidneys produce insufficient erythropoietin.' "
                 "This sentence anchors the answer to the question — do NOT omit it. "
                 "Keep ALL medical terms exactly as they are (e.g. hypertension, atherosclerosis). Do NOT replace medical terms with lay equivalents. "
-                "After the summary sentence, explain each point in separate short sentences (10–15 words each); split any sentence over 18 words into two. "
+                "After the summary sentence, explain each point in separate sentences (12–16 words each); split any sentence over 20 words into two, "
+                "but avoid strings of very short (under 8 word) sentences, since that reads too choppy and scores below the target grade level. "
                 "Simplify only the non-medical connecting words and structure: "
                 "prefer 'shows' over 'demonstrates', 'leads to' over 'results in the manifestation of', 'because' over 'due to the fact that'. "
                 "Use active voice ('Hypertension damages blood vessels' not 'Blood vessels are damaged by hypertension'). "

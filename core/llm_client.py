@@ -56,17 +56,17 @@ def get_chat_llm(
 
 
 def ragas_async_client():
-    """RAGAS 평가용 AsyncAnthropic 클라이언트.
+    """RAGAS 평가용 AsyncOpenAI 클라이언트 (settings.RAGAS_LLM_MODEL, 기본 gpt-4o-mini).
 
-    답변 생성 LLM(OpenAI/Gemini, get_llm_provider() 토글)과 무관하게 항상 Claude를 사용한다.
-    같은 모델이 답변 생성과 채점을 겸하면 순환성(circularity) 편향 비판이 생기므로,
-    RAGAS 판정 LLM만 별도 provider로 고정 분리한다.
+    답변 생성 LLM도 OpenAI 계열이라, 판정 LLM을 같은 provider로 두면 같은 모델
+    계열이 답변 생성과 채점을 겸하는 순환성(circularity) 편향 비판을 받을 수 있다
+    (원래는 Claude로 분리했었음). 비용/단순화를 위해 의도적으로 통일한 것.
     """
-    from anthropic import AsyncAnthropic
-    k = settings.get_anthropic_api_key()
+    from openai import AsyncOpenAI
+    k = settings.get_openai_api_key()
     if not k:
-        raise RuntimeError("ANTHROPIC_API_KEY가 설정되지 않았습니다.")
-    return AsyncAnthropic(api_key=k, max_retries=_LLM_MAX_RETRIES)
+        raise RuntimeError("OPENAI_API_KEY가 설정되지 않았습니다.")
+    return AsyncOpenAI(api_key=k, max_retries=_LLM_MAX_RETRIES)
 
 
 def classifier_model() -> str:
@@ -82,5 +82,5 @@ def rag_engine_model() -> str:
 
 
 def ragas_model() -> str:
-    """RAGAS 평가 전용 모델명. 항상 Claude (get_llm_provider() 토글과 무관)."""
-    return settings.ANTHROPIC_MODEL
+    """RAGAS 평가 전용 모델명 (get_llm_provider() 토글과 무관, 항상 고정)."""
+    return settings.RAGAS_LLM_MODEL

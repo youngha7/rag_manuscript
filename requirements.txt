@@ -28,12 +28,11 @@ huggingface-hub>=0.20.0,<1.0.0
 tiktoken>=0.7.0,<1.0.0
 pypdf>=4.0,<5
 
-# 평가 지표 — RAGAS 판정 LLM(Claude) · TruLens RAG Triad(Gemini, LiteLLM 경유)
+# 평가 지표 — RAGAS 판정 LLM(Claude) · DeepEval RAG 지표(Gemini, google-genai 경유)
 # 답변 생성 LLM(OpenAI/Gemini)과 판정 LLM을 분리해 순환성(circularity) 편향을 피하기 위함
 anthropic>=0.60,<1.0.0
-litellm>=1.98,<2
-trulens-core>=2.13,<3
-trulens-providers-litellm>=2.13,<3
+deepeval>=4.0,<5
+google-genai>=1.0,<2
 
 # PDF 처리 및 OCR
 pymupdf>=1.23,<2          # fitz — PDF 텍스트 추출 및 페이지 렌더링
@@ -50,6 +49,12 @@ scipy>=1.11,<2             # KDE 분포 시각화 (gaussian_kde)
 
 # [핵심 수정] 버전 고정 해제 및 호환성 확보
 # torch==2.2.0은 최신 서버 환경과 충돌하므로 최소 버전만 지정합니다.
-torch>=2.2.0
+# 2.11+ 는 PyPI 기본 빌드가 CUDA 13.0 런타임을 번들해 NVIDIA 드라이버 570.x(CUDA 12.8)에서
+# torch.cuda.is_available()==False가 됩니다. 2.10.0까지는 CUDA 12.8 런타임을 번들해 호환됩니다.
+torch>=2.2.0,<2.11.0
 # numpy 역시 특정 범위를 지정하기보다 최신 라이브러리들이 정하는 버전을 따르도록 합니다.
 numpy
+
+# main.ipynb 실행용 (Jupyter 커널)
+ipykernel>=6.0
+ipywidgets>=8.0

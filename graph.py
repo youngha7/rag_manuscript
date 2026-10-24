@@ -304,8 +304,6 @@ def run_medical_self_corrective_rag(
         "context_precision_score": 0.0,
         "critic_feedback":        "",
         # ── 성능평가 전용 지표 (disease 있는 STQS/ablation 행만 critic_agent에서 값 채움) ──
-        "hit_rate_score":                None,
-        "mrr_score":                     None,
         "deepeval_faithfulness":         None,
         "deepeval_answer_relevancy":     None,
         # ── 티어 / 루프 ───────────────────────────────────────────────────────

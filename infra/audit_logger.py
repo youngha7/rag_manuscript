@@ -41,7 +41,6 @@ _INSERT_SQL = """
         ragas_f, ragas_ar, ragas_cp, q_total,
         retrieved_doc_count, llm_model, execution_time_ms,
         final_answer, fk_grade,
-        ir_hit_rate, ir_mrr,
         deepeval_faithfulness, deepeval_answer_relevancy
     ) VALUES (
         :request_id, :loop_number, :is_final,
@@ -53,7 +52,6 @@ _INSERT_SQL = """
         :ragas_f, :ragas_ar, :ragas_cp, :q_total,
         :retrieved_doc_count, :llm_model, :execution_time_ms,
         :final_answer, :fk_grade,
-        :ir_hit_rate, :ir_mrr,
         :deepeval_faithfulness, :deepeval_answer_relevancy
     )
 """
@@ -155,8 +153,6 @@ def _build_row(
         "execution_time_ms":     execution_time_ms,
         "final_answer":          final_answer,
         "fk_grade":              fk_grade,
-        "ir_hit_rate":                    state.get("hit_rate_score"),
-        "ir_mrr":                         state.get("mrr_score"),
         "deepeval_faithfulness":          state.get("deepeval_faithfulness"),
         "deepeval_answer_relevancy":      state.get("deepeval_answer_relevancy"),
     }

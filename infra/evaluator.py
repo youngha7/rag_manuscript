@@ -383,32 +383,10 @@ def compute_official_ragas_scores(
 # ──────────────────────────────────────────────────────────────────────────────
 # 성능평가 전용 지표 (critic 루프 게이트와 무관, DB 기록·성능 시각화 전용)
 #
-# 아래 두 함수는 disease(STQS/ablation 정답 라벨)가 있는 요청에서만 호출한다
-# (critic_agent에서 gating). 일반 운영 쿼리는 ground truth가 없거나(IR 지표),
-# 순환성 교차검증이 의미가 없어(DeepEval) 불필요한 LLM 호출·비용만 늘어난다.
+# 아래 함수는 disease(STQS/ablation 정답 라벨)가 있는 요청에서만 호출한다
+# (critic_agent에서 gating) — 순환성 교차검증이 의미가 없는 일반 운영 쿼리에
+# 불필요한 LLM 호출·비용만 늘어난다.
 # ──────────────────────────────────────────────────────────────────────────────
-class IRMetrics(NamedTuple):
-    hit_rate: Optional[float]
-    mrr: Optional[float]
-
-
-def compute_ir_metrics(disease: str, context_sources: Sequence[str]) -> IRMetrics:
-    """전통적 IR 지표 Hit Rate / MRR.
-
-    data/ 폴더의 PDF 파일명이 질환명으로 시작하므로, context_sources(검색된 청크의
-    출처 파일 경로) 문자열에 disease명이 포함되면 정답 문서로 간주한다.
-    disease가 없으면(일반 운영 쿼리) ground truth가 없으므로 (None, None).
-    """
-    d = (disease or "").strip().lower()
-    if not d:
-        return IRMetrics(None, None)
-
-    for rank, source in enumerate(context_sources or [], start=1):
-        if d in (source or "").lower():
-            return IRMetrics(hit_rate=1.0, mrr=round(1.0 / rank, 6))
-    return IRMetrics(hit_rate=0.0, mrr=0.0)
-
-
 class DeepEvalScores(NamedTuple):
     faithfulness: Optional[float]
     answer_relevancy: Optional[float]

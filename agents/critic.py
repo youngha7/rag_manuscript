@@ -4,7 +4,6 @@ import config.settings as settings
 from models.state import GraphState
 from infra.evaluator import (
     compute_official_ragas_scores,
-    compute_ir_metrics,
     compute_deepeval_scores,
 )
 
@@ -53,28 +52,20 @@ def critic_agent(state: GraphState) -> GraphState:
     state["log"].append(f"[Critic] 피드백: {state['critic_feedback']}")
 
     # 성능평가 전용 지표 (Self-Correction Loop 게이트와 무관, DB 기록·성능 시각화 전용).
-    # disease(STQS/ablation 정답 라벨)가 있는 요청에서만 계산한다:
-    # - IR 지표는 ground truth(disease)가 없는 일반 운영 쿼리에서는 애초에 계산 불가.
-    # - DeepEval은 RAGAS와의 순환성 교차검증이 목적이라, 그 목적이 없는 일반 운영
-    #   쿼리에까지 추가 LLM 호출(비용·지연)을 들일 이유가 없다.
+    # disease(STQS/ablation 정답 라벨)가 있는 요청에서만 계산한다 — DeepEval은
+    # RAGAS와의 순환성 교차검증이 목적이라, 그 목적이 없는 일반 운영 쿼리에까지
+    # 추가 LLM 호출(비용·지연)을 들일 이유가 없다.
     disease = state.get("disease") or ""
     if disease:
-        ir = compute_ir_metrics(disease, state.get("context_sources", []))
-        state["hit_rate_score"] = ir.hit_rate
-        state["mrr_score"] = ir.mrr
-
         deepeval_scores = compute_deepeval_scores(eval_query, raw_answer, context_chunks)
         state["deepeval_faithfulness"] = deepeval_scores.faithfulness
         state["deepeval_answer_relevancy"] = deepeval_scores.answer_relevancy
 
         state["log"].append(
-            f"[Critic] 성능평가 지표: Hit={ir.hit_rate} MRR={ir.mrr} | "
-            f"DeepEval F={deepeval_scores.faithfulness} "
+            f"[Critic] 성능평가 지표: DeepEval F={deepeval_scores.faithfulness} "
             f"AR={deepeval_scores.answer_relevancy}"
         )
     else:
-        state["hit_rate_score"] = None
-        state["mrr_score"] = None
         state["deepeval_faithfulness"] = None
         state["deepeval_answer_relevancy"] = None
 

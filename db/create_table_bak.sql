@@ -1,7 +1,7 @@
 -- ============================================================
 -- rag_audit_log_bak 테이블 생성 스크립트 (Oracle)
 -- 실제 운영 중인 테이블 (infra/audit_logger.py가 INSERT하는 대상).
--- 버전: v5.6  (deepeval_contextual_relevancy 컬럼 제거, deepeval_* 2종만 유지)
+-- 버전: v5.7  (ir_hit_rate/ir_mrr 컬럼 제거, IR 지표 폐기)
 -- ============================================================
 
 -- 기존 객체 안전 삭제
@@ -62,8 +62,6 @@ CREATE TABLE rag_audit_log_bak (
     fk_grade                BINARY_DOUBLE,      -- Flesch-Kincaid Grade Level (영어 원문 기준)
 
     -- 성능평가 전용 지표 (critic 루프 게이트와 무관, disease 라벨 있는 STQS 행만 기록)
-    ir_hit_rate                    BINARY_DOUBLE,  -- 0 또는 1 (top-k 내 정답 문서 적중 여부)
-    ir_mrr                         BINARY_DOUBLE,  -- 0~1 (1/rank, 정답 문서 첫 등장 순위 역수)
     deepeval_faithfulness          BINARY_DOUBLE,  -- DeepEval — RAGAS F 교차검증
     deepeval_answer_relevancy      BINARY_DOUBLE,  -- DeepEval — RAGAS AR 교차검증
 
@@ -121,5 +119,18 @@ CREATE INDEX idx_bak_final       ON rag_audit_log_bak (request_id, is_final);
 -- ============================================================
 -- ALTER TABLE rag_audit_log_bak DROP (
 --     deepeval_contextual_relevancy
+-- );
+-- /
+
+-- ============================================================
+-- v5.7 (2026-09-30): ir_hit_rate/ir_mrr 제거 (라이브 DB에 이미 반영됨)
+-- IR(Hit Rate/MRR) 지표를 더 이상 사용하지 않기로 결정 — 논문 지표에서 제외.
+-- 관련 코드(agents/critic.py의 compute_ir_metrics 호출, infra/evaluator.py의
+-- IRMetrics/compute_ir_metrics, models/state.py의 hit_rate_score/mrr_score,
+-- infra/audit_logger.py의 INSERT 컬럼)도 함께 제거함.
+-- ============================================================
+-- ALTER TABLE rag_audit_log_bak DROP (
+--     ir_hit_rate,
+--     ir_mrr
 -- );
 -- /

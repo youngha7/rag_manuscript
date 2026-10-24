@@ -18,8 +18,6 @@ class GraphState(TypedDict):
     critic_feedback: str
 
     # ── 성능평가 전용 지표 (critic 루프 게이트와 무관, disease 있는 STQS/ablation 행만 값 존재) ──
-    hit_rate_score: float               # IR Hit Rate (0/1), 일반 운영 시 None
-    mrr_score: float                    # IR MRR (0~1), 일반 운영 시 None
     deepeval_faithfulness: float          # DeepEval — RAGAS F 교차검증
     deepeval_answer_relevancy: float      # DeepEval — RAGAS AR 교차검증
 

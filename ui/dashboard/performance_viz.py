@@ -63,7 +63,6 @@ def _load_data() -> pd.DataFrame:
             ragas_f, ragas_ar, ragas_cp, q_total,
             is_escalated, is_fallback,
             execution_time_ms, fk_grade, created_at,
-            ir_hit_rate, ir_mrr,
             deepeval_faithfulness, deepeval_answer_relevancy
         FROM rag_audit_log_bak
         WHERE ablation_condition IS NOT NULL
@@ -85,7 +84,6 @@ def _load_data() -> pd.DataFrame:
 
     for col in [
         "ragas_f", "ragas_ar", "ragas_cp", "q_total", "fk_grade", "query_index",
-        "ir_hit_rate", "ir_mrr",
         "deepeval_faithfulness", "deepeval_answer_relevancy",
     ]:
         df[col] = pd.to_numeric(df[col], errors="coerce")
